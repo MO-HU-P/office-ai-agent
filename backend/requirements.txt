@@ -9,3 +9,5 @@ langchain-core>=0.3,<2
 langchain-ollama>=0.3,<2
 pandas>=2.2
 numpy>=2.0
+scipy>=1.14
+seaborn>=0.13

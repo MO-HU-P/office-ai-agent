@@ -46,10 +46,15 @@ def excel_create(filename: str, sheet_name: str = "Sheet1") -> str:
 
 
 @tool
-def excel_read(filename: str, sheet: str = "", cell_range: str = "") -> str:
+def excel_read(filename: str, sheet: str = "", cell_range: str = "", mode: str = "full") -> str:
     """Excelブックの内容を読む。sheet省略時は全シート名一覧+アクティブシートの内容を返す。
-    cell_rangeで範囲指定可能(例: "A1:D10")。数式セルは数式のまま表示される。"""
+    cell_rangeで範囲指定可能(例: "A1:D10")。数式セルは数式のまま表示される。
+    mode="summary"にすると各シートの名前と使用範囲だけを返す。大きなブックはまずsummaryで
+    全体を把握し、必要なシート・範囲だけを読むこと。"""
     wb, _ = _open(filename)
+    if mode == "summary":
+        lines = [f"{ws.title}: {ws.max_row}行 x {ws.max_column}列" for ws in wb.worksheets]
+        return "シート一覧:\n" + "\n".join(lines)
     lines = [f"シート一覧: {', '.join(wb.sheetnames)}"]
     ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
     lines.append(f"--- シート「{ws.title}」({ws.max_row}行 x {ws.max_column}列) ---")
@@ -112,42 +117,44 @@ def excel_format(
     col_width: Optional[float] = None,
 ) -> str:
     """Excelのセル範囲に書式を設定する。cell_rangeは "A1:D1" のような範囲か単一セル。
+    "A1:D1,A5:D5" のようにカンマ区切りで複数範囲へ同じ書式を一括設定できる(1範囲ずつ繰り返さないこと)。
     font_color/bg_colorは "#RRGGBB" 形式。alignは left/center/right。
     number_formatは "#,##0" "0.0%" "yyyy/mm/dd" など。col_widthで列幅も設定できる。"""
     wb, path = _open(filename)
     ws = _sheet(wb, sheet or None)
-    min_c, min_r, max_c, max_r = range_boundaries(cell_range)
-    for r in range(min_r, max_r + 1):
-        for c in range(min_c, max_c + 1):
-            cell = ws.cell(row=r, column=c)
-            font_kw = {}
-            f = cell.font
-            if bold is not None:
-                font_kw["bold"] = bold
-            if italic is not None:
-                font_kw["italic"] = italic
-            if font_size is not None:
-                font_kw["size"] = font_size
-            if font_color:
-                font_kw["color"] = font_color.lstrip("#").upper()
-            if font_kw:
-                cell.font = Font(
-                    bold=font_kw.get("bold", f.bold),
-                    italic=font_kw.get("italic", f.italic),
-                    size=font_kw.get("size", f.size),
-                    color=font_kw.get("color", f.color),
-                    name=f.name,
-                )
-            if bg_color:
-                hexv = bg_color.lstrip("#").upper()
-                cell.fill = PatternFill(start_color=hexv, end_color=hexv, fill_type="solid")
-            if align:
-                cell.alignment = Alignment(horizontal=align, vertical=cell.alignment.vertical)
-            if number_format:
-                cell.number_format = number_format
-    if col_width is not None:
-        for c in range(min_c, max_c + 1):
-            ws.column_dimensions[get_column_letter(c)].width = col_width
+    for part in cell_range.split(","):
+        min_c, min_r, max_c, max_r = range_boundaries(part.strip())
+        for r in range(min_r, max_r + 1):
+            for c in range(min_c, max_c + 1):
+                cell = ws.cell(row=r, column=c)
+                font_kw = {}
+                f = cell.font
+                if bold is not None:
+                    font_kw["bold"] = bold
+                if italic is not None:
+                    font_kw["italic"] = italic
+                if font_size is not None:
+                    font_kw["size"] = font_size
+                if font_color:
+                    font_kw["color"] = font_color.lstrip("#").upper()
+                if font_kw:
+                    cell.font = Font(
+                        bold=font_kw.get("bold", f.bold),
+                        italic=font_kw.get("italic", f.italic),
+                        size=font_kw.get("size", f.size),
+                        color=font_kw.get("color", f.color),
+                        name=f.name,
+                    )
+                if bg_color:
+                    hexv = bg_color.lstrip("#").upper()
+                    cell.fill = PatternFill(start_color=hexv, end_color=hexv, fill_type="solid")
+                if align:
+                    cell.alignment = Alignment(horizontal=align, vertical=cell.alignment.vertical)
+                if number_format:
+                    cell.number_format = number_format
+        if col_width is not None:
+            for c in range(min_c, max_c + 1):
+                ws.column_dimensions[get_column_letter(c)].width = col_width
     atomic_save(wb.save, path)
     return f"{cell_range} に書式を設定しました"
 

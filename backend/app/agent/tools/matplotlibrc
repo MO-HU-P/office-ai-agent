@@ -1,0 +1,8 @@
+# run_python のグラフ描画用の既定設定。MATPLOTLIBRC 環境変数経由で適用される。
+# コンテナ同梱の Noto Sans CJK JP を使い、日本語ラベルの文字化けを防ぐ。
+backend: Agg
+font.family: sans-serif
+font.sans-serif: Noto Sans CJK JP, DejaVu Sans
+axes.unicode_minus: False
+savefig.bbox: tight
+savefig.dpi: 150

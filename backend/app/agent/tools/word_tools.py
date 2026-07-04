@@ -40,9 +40,19 @@ def word_create(filename: str, title: str = "") -> str:
 
 
 @tool
-def word_read(filename: str) -> str:
-    """Word文書の内容を読む。段落番号・スタイル付きで全段落と表を返す。編集前に必ず呼ぶこと。"""
+def word_read(filename: str, mode: str = "full") -> str:
+    """Word文書の内容を読む。段落番号・スタイル付きで全段落と表を返す。編集前に必ず呼ぶこと。
+    mode="outline"にすると表題・見出しの段落だけを返す。長い文書はまずoutlineで構造を把握し、
+    必要な箇所だけをfullで読むとよい。"""
     doc, _ = _open(filename)
+    if mode == "outline":
+        lines = []
+        for i, p in enumerate(doc.paragraphs):
+            style = p.style.name if p.style else "Normal"
+            if style == "Title" or style.startswith("Heading"):
+                lines.append(f"[{i}] ({style}) {p.text.strip()}")
+        lines.append(f"(全{len(doc.paragraphs)}段落, 表{len(doc.tables)}個)")
+        return "\n".join(lines)
     lines = []
     for i, p in enumerate(doc.paragraphs):
         style = p.style.name if p.style else "Normal"
@@ -97,6 +107,46 @@ def word_edit_paragraph(filename: str, index: int, new_text: str = "", delete: b
 
 
 @tool
+def word_batch_edit(filename: str, edits: list[dict]) -> str:
+    """複数の段落をまとめて編集・削除する。2箇所以上を直すときはword_edit_paragraphを繰り返さず必ずこちらを使う。
+    editsの各要素は {"index": 段落番号, "new_text": "新しい本文"} または {"index": 段落番号, "delete": true}。
+    indexはword_readで表示される番号(編集前の番号のままでよい)。一部が失敗しても残りは適用される。"""
+    doc, path = _open(filename)
+    paras = list(doc.paragraphs)  # 削除で番号がずれないよう、編集前の番号で対象を確定しておく
+    done: set[int] = set()
+    ok_count = 0
+    failures: list[str] = []
+    for e in edits:
+        idx = e.get("index")
+        if not isinstance(idx, int) or idx < 0 or idx >= len(paras):
+            failures.append(f"[{idx}] 段落番号が範囲外です (0〜{len(paras) - 1})")
+            continue
+        if idx in done:
+            failures.append(f"[{idx}] 同じ段落が2回指定されています")
+            continue
+        p = paras[idx]
+        if e.get("delete"):
+            p._element.getparent().remove(p._element)
+        elif e.get("new_text") is not None:
+            for run in list(p.runs):
+                run._element.getparent().remove(run._element)
+            p.add_run(str(e["new_text"]))
+        else:
+            failures.append(f"[{idx}] new_text か delete を指定してください")
+            continue
+        done.add(idx)
+        ok_count += 1
+    if ok_count:
+        atomic_save(doc.save, path)
+    if not ok_count:
+        return "エラー: 1件も適用できませんでした\n" + "\n".join(failures)
+    result = f"{filename} の{ok_count}段落を更新しました"
+    if failures:
+        result += "\n適用できなかったもの:\n" + "\n".join(failures)
+    return result
+
+
+@tool
 def word_add_table(filename: str, rows: list[list[str]], header: bool = True) -> str:
     """Word文書の末尾に表を追加する。rowsは2次元配列(行のリスト)。header=Trueなら1行目を太字ヘッダーにする。"""
     doc, path = _open(filename)
@@ -119,4 +169,4 @@ def word_add_table(filename: str, rows: list[list[str]], header: bool = True) ->
     return f"{filename} に {len(rows)}x{n_cols} の表を追加しました"
 
 
-WORD_TOOLS = [word_create, word_read, word_append, word_edit_paragraph, word_add_table]
+WORD_TOOLS = [word_create, word_read, word_append, word_edit_paragraph, word_batch_edit, word_add_table]

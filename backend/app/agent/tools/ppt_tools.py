@@ -75,10 +75,16 @@ def ppt_add_slide(filename: str, title: str, bullets: Optional[list[str]] = None
 
 
 @tool
-def ppt_read(filename: str) -> str:
-    """PowerPointの内容を読む。スライド番号ごとにタイトルと本文テキストを返す。編集前に必ず呼ぶこと。"""
+def ppt_read(filename: str, mode: str = "full") -> str:
+    """PowerPointの内容を読む。スライド番号ごとにタイトルと本文テキストを返す。編集前に必ず呼ぶこと。
+    mode="outline"にすると各スライドのタイトルだけを返す。枚数が多いときはまずoutlineで全体を把握すること。"""
     prs, _ = _open(filename)
     lines = [f"全{len(prs.slides)}枚"]
+    if mode == "outline":
+        for i, slide in enumerate(prs.slides, start=1):
+            title = slide.shapes.title.text.strip() if slide.shapes.title is not None else ""
+            lines.append(f"スライド{i}: {title or '(タイトルなし)'}")
+        return "\n".join(lines)
     for i, slide in enumerate(prs.slides, start=1):
         lines.append(f"--- スライド{i} ---")
         for shape in slide.shapes:
@@ -92,13 +98,10 @@ def ppt_read(filename: str) -> str:
     return "\n".join(lines)
 
 
-@tool
-def ppt_edit_slide(filename: str, slide_number: int, title: str = "", bullets: Optional[list[str]] = None) -> str:
-    """既存スライドのタイトル・箇条書きを書き換える。slide_numberは1始まり(ppt_readの番号)。
-    titleまたはbulletsのうち指定したものだけが置き換えられる。"""
-    prs, path = _open(filename)
-    if slide_number < 1 or slide_number > len(prs.slides):
-        return f"エラー: スライド番号 {slide_number} は範囲外です (1〜{len(prs.slides)})"
+def _apply_slide_edit(prs, slide_number: int, title: str, bullets: Optional[list[str]]) -> Optional[str]:
+    """1枚分の編集を適用する。失敗時はエラーメッセージを返し、成功時はNoneを返す。"""
+    if not isinstance(slide_number, int) or slide_number < 1 or slide_number > len(prs.slides):
+        return f"スライド番号 {slide_number} は範囲外です (1〜{len(prs.slides)})"
     slide = prs.slides[slide_number - 1]
     if title and slide.shapes.title is not None:
         slide.shapes.title.text = title
@@ -109,10 +112,45 @@ def ppt_edit_slide(filename: str, slide_number: int, title: str = "", bullets: O
                 body = shape
                 break
         if body is None:
-            return "エラー: このスライドには本文プレースホルダーがありません"
+            return f"スライド{slide_number}には本文プレースホルダーがありません"
         _fill_bullets(body, bullets)
+    return None
+
+
+@tool
+def ppt_edit_slide(filename: str, slide_number: int, title: str = "", bullets: Optional[list[str]] = None) -> str:
+    """既存スライドのタイトル・箇条書きを書き換える。slide_numberは1始まり(ppt_readの番号)。
+    titleまたはbulletsのうち指定したものだけが置き換えられる。"""
+    prs, path = _open(filename)
+    error = _apply_slide_edit(prs, slide_number, title, bullets)
+    if error:
+        return f"エラー: {error}"
     atomic_save(prs.save, path)
     return f"スライド{slide_number}を更新しました"
 
 
-PPT_TOOLS = [ppt_create, ppt_add_slide, ppt_read, ppt_edit_slide]
+@tool
+def ppt_batch_edit(filename: str, edits: list[dict]) -> str:
+    """複数のスライドをまとめて書き換える。2枚以上を直すときはppt_edit_slideを繰り返さず必ずこちらを使う。
+    editsの各要素は {"slide_number": スライド番号(1始まり), "title": "新タイトル", "bullets": ["箇条書き", ...]}。
+    titleとbulletsは指定したものだけが置き換えられる。一部が失敗しても残りは適用される。"""
+    prs, path = _open(filename)
+    ok_count = 0
+    failures: list[str] = []
+    for e in edits:
+        error = _apply_slide_edit(prs, e.get("slide_number"), e.get("title") or "", e.get("bullets"))
+        if error:
+            failures.append(error)
+        else:
+            ok_count += 1
+    if ok_count:
+        atomic_save(prs.save, path)
+    if not ok_count:
+        return "エラー: 1枚も更新できませんでした\n" + "\n".join(failures)
+    result = f"{filename} の{ok_count}枚のスライドを更新しました"
+    if failures:
+        result += "\n更新できなかったもの:\n" + "\n".join(failures)
+    return result
+
+
+PPT_TOOLS = [ppt_create, ppt_add_slide, ppt_read, ppt_edit_slide, ppt_batch_edit]

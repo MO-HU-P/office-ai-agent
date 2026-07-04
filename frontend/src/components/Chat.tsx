@@ -5,6 +5,8 @@ import type { ChatMessage, ToolCallPart } from '../types'
 
 const TOOL_LABELS: Record<string, string> = {
   list_files: 'ファイル一覧',
+  copy_file: 'ファイルコピー',
+  rename_file: '名前の変更',
   delete_file: 'ファイル削除',
   run_python: 'Python実行',
   excel_create: 'Excel作成',
@@ -17,11 +19,15 @@ const TOOL_LABELS: Record<string, string> = {
   word_read: 'Word読み取り',
   word_append: '段落追加',
   word_edit_paragraph: '段落編集',
+  word_batch_edit: '段落一括編集',
   word_add_table: '表追加',
   ppt_create: 'スライド作成',
   ppt_add_slide: 'スライド追加',
   ppt_read: 'スライド読み取り',
   ppt_edit_slide: 'スライド編集',
+  ppt_batch_edit: 'スライド一括編集',
+  merge_template: 'テンプレート差し込み',
+  check_document_issues: '文書チェック',
 }
 
 const SUGGESTIONS = [
