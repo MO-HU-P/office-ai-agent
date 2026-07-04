@@ -1,0 +1,44 @@
+# プロジェクト名を明示して、他のcomposeプロジェクトとコンテナ/ボリューム/ネットワーク名が
+# 衝突しないようにしている。ホストに公開するポートはフロントエンドの3000番のみ。
+#
+# LLMの設定は config.toml、APIキーは .env を参照。
+name: office-ai-agent
+
+services:
+  # ローカルLLM実行用 (config.toml で mode="local" のときに使われる。
+  # mode="cloud" 運用のみなら `docker compose up -d backend frontend` で省略も可)
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    # ホストには公開しない(他プロジェクトのOllama 11434と競合させない)。
+    # ホストから直接叩きたい場合は以下を有効化:
+    # ports:
+    #   - "127.0.0.1:11435:11434"
+    # NVIDIA GPUがない環境では以下のgpus行を削除してください
+    gpus: all
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434   # localモード時の接続先
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}    # cloudモード時に使用 (.env)
+    volumes:
+      - ./workspace:/workspace
+      - ./config.toml:/app/config.toml:ro
+      - ./data:/app/data   # 設定UIからの変更の保存先 (settings.json)
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${APP_PORT:-3000}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

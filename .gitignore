@@ -1,0 +1,18 @@
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.venv/
+workspace/*
+!workspace/.gitkeep
+.DS_Store
+
+# 実行時に生成される個人設定・一時ファイル
+data/
+.playwright-mcp/
+.claude/settings.local.json
+
+# APIキー等のシークレットを含むため、実ファイルはコミットしない
+# (見本の .env.example は共有するので除外しない)
+.env
+!.env.example

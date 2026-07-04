@@ -1,0 +1,35 @@
+# ============================================================
+# Office AI Agent — LLM設定 (デフォルト値)
+#
+# ★ ふだんの設定変更は、アプリ右上の歯車アイコン(設定画面)からできます。
+#   設定画面で保存した内容は data/settings.json に記録され、
+#   このファイルより優先されます(再起動・再ビルド不要)。
+#   このファイルに戻したいときは data/settings.json を削除してください。
+#
+# このファイルを直接変更した場合は `docker compose restart backend` で反映されます。
+# ============================================================
+
+[llm]
+# mode: "cloud" = Ollama Cloud (https://ollama.com, APIキーが.envに必要)
+#       "local" = ローカルOllamaコンテナ (初回起動時にモデルを自動ダウンロード)
+mode = "cloud"
+
+# --- Cloudモデルの例 (https://ollama.com/library で確認) ---
+#   gpt-oss:120b / gemma4:31b / qwen3.5:397b / nemotron-3-ultra
+# --- Localモデルの例 (tool calling対応モデルを推奨) ---
+#   qwen3.5:9b / gemma4:12b / gpt-oss:20b / 
+model = "gpt-oss:120b"
+
+# 思考モード:
+#   "auto"  = モデル既定に任せる(推奨)
+#   "true" / "false" = 思考のオン/オフ (qwen3等のオンオフ型モデル向け。gpt-oss系には効かない)
+#   "low" / "medium" / "high" = 思考の深さ (gpt-oss等のレベル型モデル向け)
+# ローカルのqwen3系は "false" 推奨(高速)。gpt-ossで速さ重視なら "low"
+reasoning = "auto"
+
+# コンテキスト長 (localモードのみ有効。VRAMに余裕があれば16384に)
+num_ctx = 16384
+
+[agent]
+# 1つの依頼あたりのツール実行ステップ上限
+max_steps = 15
