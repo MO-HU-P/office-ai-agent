@@ -6,7 +6,7 @@
 
 Ask in plain language ("make a monthly sales spreadsheet with a totals row") and the AI agent creates or edits real `.docx` / `.xlsx` / `.pptx` files in your workspace, with a live preview in the browser. Files open normally in Microsoft Office or LibreOffice.
 
-> The UI is currently Japanese-only: the primary audience is non-engineer Japanese users. The detailed end-user guide is in [README.ja.md](README.ja.md). Issues and pull requests are welcome in English or Japanese.
+> The UI is currently Japanese-only: the primary audience is non-engineer Japanese users. The detailed end-user guide is in [README.ja.md](README.ja.md).
 
 ## Features
 
@@ -64,11 +64,8 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 - **No authentication** — designed for localhost / trusted networks only. The agent executes Python for data analysis, so do not expose it to the internet.
 - API keys live only in `.env`; they are never returned by the API, logged, or shown in the UI.
 - Tool docstrings and the system prompt are intentionally in Japanese: they are part of the LLM prompt, and matching the language of user requests improves tool selection — especially for small local models.
+- **Big requests work best step by step** (create the table → add the analysis → write the report). If a cloud call fails or stalls mid-run, generated files are kept — just ask the agent to continue. Stalled LLM streams are cut off and retried automatically (tunable via `agent.llm_idle_timeout` in `config.toml`).
 - No GPU? Remove the `gpus: all` line in `docker-compose.yml` (local mode will run on CPU).
-
-## Contributing
-
-Issues and pull requests are welcome, in English or Japanese.
 
 ## License
 
