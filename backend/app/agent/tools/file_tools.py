@@ -63,7 +63,10 @@ def delete_file(filename: str) -> str:
 @tool
 def run_python(code: str) -> str:
     """Pythonコードを実行し、標準出力を返す(データ分析・統計解析・グラフ作成・CSV処理などに使う)。
-    利用可能: pandas / numpy / scipy(検定・回帰・分布フィットなどの統計解析) /
+    利用可能: pandas / numpy / scipy(t検定・カイ二乗検定・分布フィットなどの基本統計) /
+    statsmodels(統計モデリング: 回帰分析の詳細レポート summary()・分散分析 anova_lm・
+    ロジスティック回帰・GLM・時系列 ARIMA。smf.ols("y ~ x1 + x2", data=df) のように
+    R風の式でモデルを指定でき、決定係数・係数のp値・信頼区間まで一度に出せる) /
     seaborn・matplotlib(グラフ描画。日本語フォント設定済みなのでラベルは日本語でよい) /
     openpyxl・python-docx・python-pptx(グラフ画像の文書への貼り込みに使える)。
     カレントディレクトリはワークスペースなので、ファイルは相対パス(例: "data.csv")でそのまま読み書きできる。
