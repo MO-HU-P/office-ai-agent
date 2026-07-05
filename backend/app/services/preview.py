@@ -1,13 +1,15 @@
-"""右ペイン用のプレビュー生成。
+"""右ペイン用のプレビュー生成と、エージェント用のページ画像化。
 
 - Excel: openpyxlでセル値+基本スタイルをJSON化(フロントでSheets風グリッド描画)
 - PowerPoint: LibreOffice headlessでPDF化 → pdftoppmでスライドPNG化
 - Word: フロント側で docx-preview がrawファイルを直接描画するため変換不要
+  (エージェントのrender_pageツールはWordもLibreOfficeでPNG化する)
 """
 import asyncio
 import datetime as dt
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,9 @@ from ..config import PREVIEW_CACHE_DIR
 MAX_ROWS = 300
 MAX_COLS = 60
 
-_soffice_lock = asyncio.Lock()  # LibreOfficeは同時起動に弱いため直列化
+# LibreOfficeは同時起動に弱いため直列化。プレビューAPI(イベントループ)と
+# エージェントツール(ワーカースレッド)の両方から呼ばれるのでthreading.Lockを使う
+_soffice_lock = threading.Lock()
 
 
 def _color_hex(color) -> str | None:
@@ -141,29 +145,44 @@ def _cache_dir_for(path: Path) -> Path:
     return PREVIEW_CACHE_DIR / f"{path.stem}__{mtime}"
 
 
-async def pptx_preview(path: Path) -> dict[str, Any]:
-    """PPTXをスライドPNG群に変換し、画像URLのリストを返す(mtimeでキャッシュ)。"""
-    cache_dir = _cache_dir_for(path)
-    if not cache_dir.exists():
-        async with _soffice_lock:
-            if not cache_dir.exists():
-                await asyncio.to_thread(_convert_pptx, path, cache_dir)
-    def _slide_no(p: Path) -> int:
-        try:
-            return int(p.stem.split("-")[-1])
-        except ValueError:
-            return 0
+def _page_no(p: Path) -> int:
+    try:
+        return int(p.stem.split("-")[-1])
+    except ValueError:
+        return 0
 
-    images = sorted(cache_dir.glob("slide-*.png"), key=_slide_no)
+
+def _page_images(path: Path) -> list[Path]:
+    """docx/pptxをページPNG群に変換し、ページ順のパスリストを返す(mtimeでキャッシュ)。"""
+    cache_dir = _cache_dir_for(path)
+    with _soffice_lock:
+        if not cache_dir.exists():
+            _convert_to_pngs(path, cache_dir)
+    images = sorted(cache_dir.glob("slide-*.png"), key=_page_no)
     if not images:
-        raise RuntimeError("スライド画像の生成に失敗しました")
+        raise RuntimeError("ページ画像の生成に失敗しました")
+    return images
+
+
+async def pptx_preview(path: Path) -> dict[str, Any]:
+    """PPTXをスライドPNG群に変換し、画像URLのリストを返す。"""
+    images = await asyncio.to_thread(_page_images, path)
     return {
         "type": "pptx",
-        "slides": [f"/api/preview_cache/{cache_dir.name}/{img.name}" for img in images],
+        "slides": [f"/api/preview_cache/{img.parent.name}/{img.name}" for img in images],
     }
 
 
-def _convert_pptx(path: Path, cache_dir: Path):
+def render_page_png(path: Path, page: int) -> tuple[Path, int]:
+    """指定ページ/スライドのPNGパスと総ページ数を返す(エージェントのrender_pageツール用)。
+    ページ番号が範囲外のときはValueError。同期関数なのでワーカースレッドから呼べる。"""
+    images = _page_images(path)
+    if page < 1 or page > len(images):
+        raise ValueError(f"ページ番号 {page} は範囲外です (1〜{len(images)})")
+    return images[page - 1], len(images)
+
+
+def _convert_to_pngs(path: Path, cache_dir: Path):
     tmp_dir = cache_dir.with_suffix(".tmp")
     shutil.rmtree(tmp_dir, ignore_errors=True)
     tmp_dir.mkdir(parents=True)

@@ -159,6 +159,72 @@ def excel_format(
     return f"{cell_range} に書式を設定しました"
 
 
+def _rows_to_ranges(rows: list[int], max_col: int) -> str:
+    """連続する行番号をまとめて、excel_formatに渡せる範囲文字列を作る。"""
+    last_col = get_column_letter(max_col)
+    parts = []
+    start = prev = rows[0]
+    for r in rows[1:] + [None]:
+        if r is not None and r == prev + 1:
+            prev = r
+            continue
+        parts.append(f"A{start}:{last_col}{start}" if start == prev else f"A{start}:{last_col}{prev}")
+        if r is not None:
+            start = prev = r
+    return ",".join(parts)
+
+
+@tool
+def excel_query(filename: str, column: str, op: str, value: Any, sheet: str = "", header_row: int = 1) -> str:
+    """Excelの表から条件に合う行を探し、行番号を返す。全データを読まずに対象行を特定できる。
+    「売上が100万円を超える行に色を付けて」のような依頼では、まずこれで行番号を特定し、
+    結果に含まれる範囲文字列をそのままexcel_formatに渡すとよい。
+    column: 見出し行の列名(例: "売上")または列記号(例: "B")。header_rowは見出しの行番号(既定1)。
+    op: "=" / "!=" / ">" / ">=" / "<" / "<=" / "contains"(部分一致)。
+    注意: 数式セルは計算結果が保存されている場合のみ判定できる(判定できないセルは対象外になる)。"""
+    path = resolve_workspace_path(filename, must_exist=True)
+    if path.suffix != ".xlsx":
+        return "エラー: Excelブックは .xlsx ファイルを指定してください"
+    wb = load_workbook(str(path), data_only=True)  # 数式はキャッシュ済みの計算結果で比較する
+    ws = wb[sheet] if sheet and sheet in wb.sheetnames else wb.active
+    if op not in ("=", "==", "!=", ">", ">=", "<", "<=", "contains"):
+        return 'エラー: opは "=" "!=" ">" ">=" "<" "<=" "contains" のいずれかを指定してください'
+    # 列名→列番号の解決(見出し行を優先し、見つからなければ列記号として解釈)
+    headers = {}
+    for c in range(1, ws.max_column + 1):
+        v = ws.cell(row=header_row, column=c).value
+        if v is not None:
+            headers[str(v).strip()] = c
+    if column.strip() in headers:
+        col_idx = headers[column.strip()]
+    elif column.strip().isascii() and column.strip().isalpha() and len(column.strip()) <= 3:
+        col_idx = range_boundaries(f"{column.strip().upper()}1")[0]
+    else:
+        return f"エラー: 列「{column}」が見出し行{header_row}に見つかりません。ある列名: {', '.join(list(headers)[:20])}"
+
+    def _match(v: Any) -> bool:
+        if op == "contains":
+            return v is not None and str(value) in str(v)
+        try:
+            a, b = float(v), float(value)  # 数値として比較できるなら数値で
+        except (TypeError, ValueError):
+            if op in ("=", "=="):
+                return v is not None and str(v).strip() == str(value).strip()
+            if op == "!=":
+                return v is None or str(v).strip() != str(value).strip()
+            return False  # 大小比較は数値のみ
+        return {"=": a == b, "==": a == b, "!=": a != b, ">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
+
+    hits = [r for r in range(header_row + 1, ws.max_row + 1) if _match(ws.cell(row=r, column=col_idx).value)]
+    if not hits:
+        return f"「{column}」が {op} {value} に該当する行はありませんでした"
+    shown = ", ".join(str(r) for r in hits[:100]) + ("..." if len(hits) > 100 else "")
+    lines = [f"「{column}」が {op} {value} の行: {shown} ({len(hits)}件)"]
+    if len(hits) <= 50:
+        lines.append(f'excel_formatにそのまま使える範囲: "{_rows_to_ranges(hits, ws.max_column)}"')
+    return "\n".join(lines)
+
+
 @tool
 def excel_add_sheet(filename: str, sheet_name: str) -> str:
     """Excelブックに新しいシートを追加する。"""
@@ -170,4 +236,4 @@ def excel_add_sheet(filename: str, sheet_name: str) -> str:
     return f"シート「{sheet_name}」を追加しました"
 
 
-EXCEL_TOOLS = [excel_create, excel_read, excel_write_cells, excel_write_rows, excel_format, excel_add_sheet]
+EXCEL_TOOLS = [excel_create, excel_read, excel_query, excel_write_cells, excel_write_rows, excel_format, excel_add_sheet]

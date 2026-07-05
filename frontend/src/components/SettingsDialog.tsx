@@ -112,7 +112,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
     const selected = listed.find((m) => m.name === currentModel)
     return selected
       ? [{ ...selected, missing: false }, ...rest]
-      : [{ name: currentModel, size: null, missing: mode === 'local' }, ...rest]
+      : [{ name: currentModel, size: null, vision: false, missing: mode === 'local' }, ...rest]
   }, [listed, currentModel, mode])
 
   const startPull = useCallback(
@@ -254,6 +254,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
                         onChange={() => setCurrentModel(m.name)}
                       />
                       <span className="model-name">{m.name}</span>
+                      {m.vision && <span className="model-badge">画像対応</span>}
                       {m.missing ? (
                         <span className="model-note">未ダウンロード</span>
                       ) : (
@@ -280,6 +281,11 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
                   ))}
                   {rows.length === 0 && <p className="model-note">モデルがありません。下の欄から追加してください。</p>}
                 </div>
+              )}
+              {rows.some((m) => m.vision) && (
+                <p className="model-note">
+                  「画像対応」のモデルを選ぶと、AIがスライドや文書の見た目を画像で確認しながら修正できます。
+                </p>
               )}
 
               {pull ? (

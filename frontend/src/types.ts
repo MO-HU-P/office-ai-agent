@@ -78,6 +78,7 @@ export interface SettingsInfo {
 export interface ModelInfo {
   name: string
   size?: number | null
+  vision?: boolean
 }
 
 export interface ModelListResult {

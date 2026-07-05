@@ -389,6 +389,10 @@ button { font-family: inherit; cursor: pointer; }
 .model-row input[type='radio'] { accent-color: var(--blue); }
 .model-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-size { color: var(--text-2); font-size: 12px; flex-shrink: 0; }
+.model-badge {
+  color: var(--blue); border: 1px solid #c2d7f8; background: #fff;
+  border-radius: 10px; padding: 1px 8px; font-size: 11px; flex-shrink: 0;
+}
 .model-note { color: var(--text-2); font-size: 12px; padding: 4px 2px; }
 
 .model-add { display: flex; gap: 8px; margin-top: 10px; }

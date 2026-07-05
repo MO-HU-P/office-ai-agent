@@ -5,6 +5,7 @@
 - ダウンロード(pull)と削除はローカルOllamaのみが対象(Cloudはダウンロード不要)。
 - クライアントへ返すのはモデル名とサイズのみ。認証情報やURL等の内部情報は返さない。
 """
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -28,7 +29,9 @@ def _endpoint(mode: str) -> tuple[str, dict[str, str]]:
 
 
 async def list_models(mode: str) -> list[dict]:
-    """モデル一覧を [{name, size}] で返す。sizeはバイト数(不明ならNone)。"""
+    """モデル一覧を [{name, size, vision}] で返す。sizeはバイト数(不明ならNone)。
+    visionは画像入力対応か(設定UIの「画像対応」バッジ用。判定結果はキャッシュされるため、
+    2回目以降の一覧取得では追加のAPI呼び出しは発生しない)。"""
     base, headers = _endpoint(mode)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -38,7 +41,44 @@ async def list_models(mode: str) -> list[dict]:
     if res.status_code != 200:
         raise OllamaUnavailable(f"Ollamaがエラーを返しました ({mode}: HTTP {res.status_code})")
     models = res.json().get("models", [])
-    return [{"name": m.get("name", ""), "size": m.get("size")} for m in models if m.get("name")]
+    infos = [(m["name"], m.get("size")) for m in models if m.get("name")]
+    sem = asyncio.Semaphore(8)  # /api/show をモデル数ぶん叩くので同時数を抑える
+
+    async def _vision(name: str) -> bool:
+        async with sem:
+            return await model_supports_vision(mode, name)
+
+    visions = await asyncio.gather(*(_vision(name) for name, _ in infos))
+    return [
+        {"name": name, "size": size, "vision": vision}
+        for (name, size), vision in zip(infos, visions)
+    ]
+
+
+_vision_cache: dict[tuple[str, str], bool] = {}
+
+
+async def model_supports_vision(mode: str, model: str) -> bool:
+    """モデルが画像入力(vision)に対応しているかを /api/show のcapabilitiesで判定する。
+    判定できないとき(接続失敗等)はFalseを返す(画像ツールを無効化する安全側)。
+    確定した結果だけをキャッシュし、依頼のたびのAPI呼び出しを避ける。"""
+    key = (mode, model)
+    if key in _vision_cache:
+        return _vision_cache[key]
+    base, headers = _endpoint(mode)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.post(f"{base}/api/show", json={"model": model}, headers=headers)
+    except httpx.HTTPError:
+        return False
+    if res.status_code != 200:
+        return False
+    try:
+        ok = "vision" in res.json().get("capabilities", [])
+    except (ValueError, AttributeError):
+        return False
+    _vision_cache[key] = ok
+    return ok
 
 
 async def stream_pull(name: str) -> AsyncIterator[str]:
