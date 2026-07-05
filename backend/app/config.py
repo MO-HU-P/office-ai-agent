@@ -30,6 +30,8 @@ _agent = _cfg.get("agent", {})
 
 MAX_AGENT_STEPS = int(_agent.get("max_steps", 15))
 MAX_HISTORY_MESSAGES = int(_agent.get("max_history_messages", 40))
+# LLMのストリーミング中、次のチャンクをこの秒数待っても届かなければ打ち切る
+LLM_IDLE_TIMEOUT = float(_agent.get("llm_idle_timeout", 180))
 
 # --- 環境変数 (インフラ・シークレット。実行時変更しない) ---
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "").strip()
@@ -180,7 +182,8 @@ PREVIEW_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 def resolve_workspace_path(filename: str, must_exist: bool = False) -> Path:
     """ワークスペース内のパスに解決する。外側へのトラバーサルは拒否。"""
     path = (WORKSPACE_DIR / filename).resolve()
-    if not str(path).startswith(str(WORKSPACE_DIR)):
+    # 文字列の前方一致では /workspace2 のような「名前が同じで始まる別ディレクトリ」を通してしまう
+    if path != WORKSPACE_DIR and not path.is_relative_to(WORKSPACE_DIR):
         raise ValueError(f"ワークスペース外のパスは指定できません: {filename}")
     if must_exist and not path.exists():
         raise FileNotFoundError(f"ファイルが見つかりません: {filename}")

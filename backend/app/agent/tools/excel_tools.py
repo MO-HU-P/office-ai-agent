@@ -60,6 +60,9 @@ def excel_read(filename: str, sheet: str = "", cell_range: str = "", mode: str =
     lines.append(f"--- シート「{ws.title}」({ws.max_row}行 x {ws.max_column}列) ---")
     if cell_range:
         min_c, min_r, max_c, max_r = range_boundaries(cell_range)
+        # 巨大な範囲指定で応答が肥大化しないよう、実データがある範囲+上限に丸める
+        max_r = min(max_r, ws.max_row, min_r + 499)
+        max_c = min(max_c, ws.max_column, min_c + 59)
     else:
         min_r, min_c = 1, 1
         max_r, max_c = min(ws.max_row, 100), min(ws.max_column, 30)

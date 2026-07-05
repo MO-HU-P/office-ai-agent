@@ -73,13 +73,15 @@ def run_python(code: str) -> str:
     結果は必ずprint()で出力すること。Excelの集計値を計算してから書き込む用途にも使える。
     グラフは plt.savefig("グラフ.png") でPNG保存してから add_picture 等で文書に貼り込み、
     貼り込みが済んだ一時PNGは os.remove で削除する。"""
+    # APIキー等のシークレットは実行コードから見えないようにする(生成コードが誤って文書へ書き出すのを防ぐ)
+    env = {k: v for k, v in os.environ.items() if "KEY" not in k.upper() and "TOKEN" not in k.upper() and "SECRET" not in k.upper()}
     result = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,
         text=True,
         timeout=60,
         cwd=str(WORKSPACE_DIR),
-        env={**os.environ, "MPLBACKEND": "Agg", "MATPLOTLIBRC": str(MATPLOTLIBRC)},
+        env={**env, "MPLBACKEND": "Agg", "MATPLOTLIBRC": str(MATPLOTLIBRC)},
     )
     out = result.stdout.strip()
     err = result.stderr.strip()

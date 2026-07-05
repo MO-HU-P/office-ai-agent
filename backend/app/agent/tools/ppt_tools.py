@@ -1,5 +1,5 @@
 """PowerPoint (.pptx) 操作ツール群"""
-from typing import Optional
+from typing import Any, Optional
 
 from langchain_core.tools import tool
 from pptx import Presentation
@@ -290,14 +290,15 @@ def ppt_add_image(filename: str, slide_number: int, image_file: str, left: float
 def ppt_add_table(
     filename: str,
     slide_number: int,
-    rows: list[list[str]],
+    rows: list[list[Any]],
     left: float = 1.5,
     top: float = 4.5,
     width: float = 22.0,
     header: bool = True,
     font_size: float = 14,
 ) -> str:
-    """既存スライドに表を追加する。rowsは2次元配列(行のリスト)で、header=Trueなら1行目が見出し行になる。
+    """既存スライドに表を追加する。rowsは2次元配列(行のリスト)で、セルは文字列・数値どちらでもよい。
+    header=Trueなら1行目が見出し行になる。
     位置・大きさの単位はcm(標準4:3スライドは幅25.4cm x 高さ19.05cm)。slide_numberは1始まり。"""
     prs, path = _open(filename)
     slide = _get_slide(prs, slide_number)
@@ -312,7 +313,7 @@ def ppt_add_table(
     for ri, row in enumerate(rows):
         for ci in range(n_cols):
             cell = table.cell(ri, ci)
-            cell.text = str(row[ci]) if ci < len(row) else ""
+            cell.text = str(row[ci]) if ci < len(row) and row[ci] is not None else ""
             for p in cell.text_frame.paragraphs:
                 for run in p.runs:
                     run.font.size = Pt(font_size)

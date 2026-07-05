@@ -7,6 +7,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -134,6 +135,20 @@ def _shorten(value: Any, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+_TOOL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _drop_broken_tool_calls(tool_calls: list[dict]) -> list[dict]:
+    """ツール名が識別子の形をしていない呼び出しを取り除く(Ollama Cloudが不安定なとき、
+    「...」等の壊れた名前の呼び出しが正常な呼び出しに混ざって届くことがある)。
+    正常な呼び出しが1つも残らない場合は元のまま返し、通常のエラー応答でモデルに修正を促す。"""
+    kept = [tc for tc in tool_calls if _TOOL_NAME_RE.match(tc.get("name") or "")]
+    if kept and len(kept) < len(tool_calls):
+        dropped = [tc.get("name") or "(無名)" for tc in tool_calls if tc not in kept]
+        logger.warning("壊れたツール呼び出しを無視します: %s", dropped)
+    return kept or tool_calls
+
+
 # pydanticのエラー種別(bool_parsing等)の先頭部分 → 期待する値の日本語表現
 _TYPE_HINTS = {
     "bool": "true または false",
@@ -190,7 +205,6 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
     messages: list[BaseMessage] = [SystemMessage(system_prompt), *history, HumanMessage(user_message)]
 
     for _step in range(config.MAX_AGENT_STEPS):
-        think_filter = ThinkFilter()
         gathered = None
         failed = False
         # 一時的なサーバーエラー(Ollama Cloudの500など)に備え、
@@ -198,8 +212,16 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
         for attempt in range(3):
             emitted = False
             gathered = None
+            think_filter = ThinkFilter()  # リトライで最初から流し直すため、途中状態を持ち越さない
             try:
-                async for chunk in llm.astream(messages):
+                # Ollama Cloudはまれに応答を返さないまま無言で止まるため、
+                # 「次のチャンクが一定時間来ない」場合は打ち切ってリトライに回す
+                stream = aiter(llm.astream(messages))
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(anext(stream), timeout=config.LLM_IDLE_TIMEOUT)
+                    except StopAsyncIteration:
+                        break
                     if isinstance(chunk.content, str) and chunk.content:
                         visible = think_filter.feed(chunk.content)
                         if visible:
@@ -245,7 +267,7 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
 
         ai_msg = AIMessage(
             content=gathered.content if isinstance(gathered.content, str) else "",
-            tool_calls=gathered.tool_calls or [],
+            tool_calls=_drop_broken_tool_calls(gathered.tool_calls or []),
         )
         messages.append(ai_msg)
 

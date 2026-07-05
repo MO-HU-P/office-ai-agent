@@ -7,6 +7,7 @@
 """
 import asyncio
 import datetime as dt
+import glob as glob_module
 import shutil
 import subprocess
 import threading
@@ -203,8 +204,9 @@ def _convert_to_pngs(path: Path, cache_dir: Path):
             check=True, capture_output=True, timeout=120,
         )
         pdfs[0].unlink()
-        # 古いキャッシュを掃除してから確定(作業中のtmpディレクトリ自身は除外)
-        for old in PREVIEW_CACHE_DIR.glob(f"{path.stem}__*"):
+        # 古いキャッシュを掃除してから確定(作業中のtmpディレクトリ自身は除外)。
+        # ファイル名に * [ ] ? が含まれてもパターン扱いされないようエスケープする
+        for old in PREVIEW_CACHE_DIR.glob(f"{glob_module.escape(path.stem)}__*"):
             if old != tmp_dir:
                 shutil.rmtree(old, ignore_errors=True)
         tmp_dir.rename(cache_dir)

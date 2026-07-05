@@ -1,5 +1,6 @@
 """Word (.docx) 操作ツール群"""
 import json
+from typing import Any
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -74,8 +75,11 @@ def word_append(filename: str, text: str, style: str = "normal") -> str:
     """Word文書の末尾に段落を追加する。textに改行(\\n)を含めると複数段落として追加される。
     style: normal / title / h1 / h2 / h3 / h4 / bullet(箇条書き) / number(番号付き) / quote(引用)"""
     doc, path = _open(filename)
+    if not text.strip():
+        return "エラー: textが空です。追加する本文を指定してください"
     style_name = STYLE_MAP.get(style, None)
     count = 0
+    style_failed = False
     for line in text.split("\n"):
         if style == "normal" and not line.strip():
             doc.add_paragraph("")
@@ -85,10 +89,13 @@ def word_append(filename: str, text: str, style: str = "normal") -> str:
             try:
                 p.style = style_name
             except KeyError:
-                pass
+                style_failed = True
         count += 1
     atomic_save(doc.save, path)
-    return f"{filename} に{count}段落を追加しました (style={style})"
+    result = f"{filename} に{count}段落を追加しました (style={style})"
+    if style_failed:
+        result += f"\n注意: スタイル「{style_name}」がこの文書に無いため、標準スタイルのままです"
+    return result
 
 
 @tool
@@ -119,9 +126,22 @@ def word_find(filename: str, query: str = "", style: str = "") -> str:
     return "\n".join(lines)
 
 
+def _apply_para_style(p, style: str) -> str | None:
+    """段落にスタイル(normal/h1等)を適用する。失敗時はエラーメッセージを返し、成功時はNone。"""
+    if style not in STYLE_MAP:
+        return f"styleは {' / '.join(STYLE_MAP)} のいずれかを指定してください"
+    try:
+        p.style = STYLE_MAP[style] or "Normal"
+    except KeyError:
+        return f"スタイル「{STYLE_MAP[style]}」がこの文書にありません"
+    return None
+
+
 @tool
-def word_edit_paragraph(filename: str, index: int, new_text: str = "", delete: bool = False) -> str:
-    """既存段落を編集する。indexはword_readで表示される段落番号。delete=Trueでその段落を削除。"""
+def word_edit_paragraph(filename: str, index: int, new_text: str = "", delete: bool = False, style: str = "") -> str:
+    """既存段落を編集する。indexはword_readで表示される段落番号。delete=Trueでその段落を削除。
+    styleを指定すると段落スタイルを変更できる(normal/title/h1/h2/h3/h4/bullet/number/quote)。
+    styleだけ指定すれば本文はそのままスタイルだけ変わる(「この段落を見出しにして」に使える)。"""
     doc, path = _open(filename)
     if index < 0 or index >= len(doc.paragraphs):
         return f"エラー: 段落番号 {index} は範囲外です (0〜{len(doc.paragraphs) - 1})"
@@ -130,18 +150,31 @@ def word_edit_paragraph(filename: str, index: int, new_text: str = "", delete: b
         p._element.getparent().remove(p._element)
         atomic_save(doc.save, path)
         return f"段落 [{index}] を削除しました"
-    # 既存の書式(スタイル)を保ちつつテキストだけ差し替える
-    for run in list(p.runs):
-        run._element.getparent().remove(run._element)
-    p.add_run(new_text)
+    if not new_text and not style:
+        return "エラー: new_text(新しい本文)・style(スタイル)・delete のいずれかを指定してください"
+    done = []
+    if new_text:
+        # 既存の書式(スタイル)を保ちつつテキストだけ差し替える
+        for run in list(p.runs):
+            run._element.getparent().remove(run._element)
+        p.add_run(new_text)
+        done.append("本文")
+    if style:
+        error = _apply_para_style(p, style)
+        if error:
+            if done:
+                atomic_save(doc.save, path)
+            return f"エラー: {error}" if not done else f"段落 [{index}] の本文は更新しましたが、スタイルは失敗: {error}"
+        done.append(f"スタイル({style})")
     atomic_save(doc.save, path)
-    return f"段落 [{index}] を更新しました"
+    return f"段落 [{index}] の{'と'.join(done)}を更新しました"
 
 
 @tool
 def word_batch_edit(filename: str, edits: list[dict]) -> str:
     """複数の段落をまとめて編集・削除する。2箇所以上を直すときはword_edit_paragraphを繰り返さず必ずこちらを使う。
-    editsの各要素は {"index": 段落番号, "new_text": "新しい本文"} または {"index": 段落番号, "delete": true}。
+    editsの各要素は {"index": 段落番号, "new_text": "新しい本文"} / {"index": 段落番号, "delete": true} /
+    {"index": 段落番号, "style": "h1"}(スタイル変更: normal/title/h1/h2/h3/h4/bullet/number/quote。new_textと併用可)。
     indexはword_readで表示される番号(編集前の番号のままでよい)。一部が失敗しても残りは適用される。"""
     doc, path = _open(filename)
     paras = list(doc.paragraphs)  # 削除で番号がずれないよう、編集前の番号で対象を確定しておく
@@ -159,12 +192,19 @@ def word_batch_edit(filename: str, edits: list[dict]) -> str:
         p = paras[idx]
         if e.get("delete"):
             p._element.getparent().remove(p._element)
-        elif e.get("new_text") is not None:
-            for run in list(p.runs):
-                run._element.getparent().remove(run._element)
-            p.add_run(str(e["new_text"]))
+        elif e.get("new_text") is not None or e.get("style"):
+            if e.get("new_text") is not None:
+                for run in list(p.runs):
+                    run._element.getparent().remove(run._element)
+                p.add_run(str(e["new_text"]))
+            if e.get("style"):
+                error = _apply_para_style(p, str(e["style"]))
+                if error:
+                    failures.append(f"[{idx}] {error}")
+                    if e.get("new_text") is None:
+                        continue  # スタイルのみの指定で失敗したら、この段落は未適用扱い
         else:
-            failures.append(f"[{idx}] new_text か delete を指定してください")
+            failures.append(f"[{idx}] new_text / style / delete のいずれかを指定してください")
             continue
         done.add(idx)
         ok_count += 1
@@ -303,8 +343,9 @@ def word_apply_style(filename: str, styles: dict) -> str:
 
 
 @tool
-def word_add_table(filename: str, rows: list[list[str]], header: bool = True) -> str:
-    """Word文書の末尾に表を追加する。rowsは2次元配列(行のリスト)。header=Trueなら1行目を太字ヘッダーにする。"""
+def word_add_table(filename: str, rows: list[list[Any]], header: bool = True) -> str:
+    """Word文書の末尾に表を追加する。rowsは2次元配列(行のリスト)で、セルは文字列・数値どちらでもよい。
+    header=Trueなら1行目を太字ヘッダーにする。"""
     doc, path = _open(filename)
     if not rows or not rows[0]:
         return "エラー: rowsが空です"
@@ -313,7 +354,7 @@ def word_add_table(filename: str, rows: list[list[str]], header: bool = True) ->
     table.style = "Light Grid Accent 1"
     for ri, row in enumerate(rows):
         for ci in range(n_cols):
-            val = str(row[ci]) if ci < len(row) else ""
+            val = str(row[ci]) if ci < len(row) and row[ci] is not None else ""
             cell = table.cell(ri, ci)
             cell.text = val
             if header and ri == 0:

@@ -9,6 +9,10 @@ interface AgentSocketOptions {
 export function useAgentSocket({ onDocUpdated, onDocDeleted }: AgentSocketOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  busyRef.current = busy
+  const messagesRef = useRef<ChatMessage[]>([])
+  messagesRef.current = messages
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const onDocUpdatedRef = useRef(onDocUpdated)
@@ -41,9 +45,35 @@ export function useAgentSocket({ onDocUpdated, onDocDeleted }: AgentSocketOption
       const ws = new WebSocket(`${proto}://${location.host}/ws`)
       wsRef.current = ws
 
-      ws.onopen = () => setConnected(true)
+      ws.onopen = () => {
+        setConnected(true)
+        // 画面が空(ページを開き直した)なら、サーバー側に残っている前の会話の記憶も消して揃える。
+        // 一時的な切断からの再接続(画面に会話が残っている)では記憶を引き継ぐ
+        if (messagesRef.current.length === 0) {
+          ws.send(JSON.stringify({ type: 'reset' }))
+        }
+      }
       ws.onclose = () => {
         setConnected(false)
+        // 実行中に切断された場合は、実行中のまま止まって見えないように明示する。
+        // サーバー側の会話の記憶は接続ごとなので、切断で消えることも知らせる
+        if (busyRef.current) {
+          setMessages((prev) => {
+            const next = prev.map((m) =>
+              m.role === 'assistant'
+                ? { ...m, parts: m.parts.map((p) => (p.kind === 'tool' && p.status === 'running' ? { ...p, status: 'error' as const } : p)) }
+                : m,
+            )
+            const last = next[next.length - 1]
+            if (last && last.role === 'assistant') {
+              next[next.length - 1] = {
+                ...last,
+                parts: [...last.parts, { kind: 'text', content: '\n\n⚠️ サーバーとの接続が切れたため、作業を中断しました。再接続後にもう一度指示してください。' }],
+              }
+            }
+            return next
+          })
+        }
         setBusy(false)
         if (!disposed) retryTimer = window.setTimeout(connect, 2000)
       }
