@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# TypeScriptの増分ビルドキャッシュ(ローカルで tsc/vite build 時に生成される)
+*.tsbuildinfo
 __pycache__/
 *.pyc
 .venv/
