@@ -240,8 +240,8 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
                     s = config.get_settings()
                     model = s.model
                     logger.error("モデルが見つかりません (提供終了または入力ミス): %s", model)
-                    if s.provider == "openai":
-                        # OpenAIは自由入力できるため、まず入力ミスを疑ってもらう
+                    if s.provider != "ollama":
+                        # OpenAI/Gemini等はモデル名を自由入力できるため、まず入力ミスを疑ってもらう
                         message = (f"AIモデル「{model}」が見つかりません。モデル名が正しいか確認して、"
                                    "右上の設定（歯車アイコン）から選び直してください。")
                     else:

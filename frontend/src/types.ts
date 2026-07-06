@@ -56,10 +56,12 @@ export type PreviewData =
   | { type: 'csv'; content: string }
   | { type: 'unsupported' }
 
-export type LLMProvider = 'ollama' | 'openai'
+export type LLMProvider = 'ollama' | 'openai' | 'gemini'
 export type LLMMode = 'local' | 'cloud'
 // モデル一覧の取得元。Ollamaは local/cloud、外部プロバイダーはその名前
-export type ModelSource = 'local' | 'cloud' | 'openai'
+export type ModelSource = 'local' | 'cloud' | 'openai' | 'gemini'
+// 外部プロバイダー(=モデルを自由入力でき、候補をsettings.jsonに保存できるもの)
+export type ExternalProvider = 'openai' | 'gemini'
 
 export interface HealthInfo {
   provider: LLMProvider
@@ -77,11 +79,14 @@ export interface SettingsInfo {
   model_local: string
   model_cloud: string
   model_openai: string
-  // 設定画面で自由入力し保存したOpenAIモデル候補(settings.json)。プリセットとは別で削除可能
+  model_gemini: string
+  // 設定画面で自由入力し保存した外部プロバイダーのモデル候補(settings.json)。プリセットとは別で削除可能
   openai_custom_models: string[]
+  gemini_custom_models: string[]
   reasoning: string
   cloud_key_configured: boolean
   openai_key_configured: boolean
+  gemini_key_configured: boolean
 }
 
 export interface ModelInfo {

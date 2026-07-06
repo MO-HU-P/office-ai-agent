@@ -141,7 +141,9 @@ class SettingsUpdate(BaseModel):
     model_local: str | None = None
     model_cloud: str | None = None
     model_openai: str | None = None
+    model_gemini: str | None = None
     openai_custom_models: list[str] | None = None
+    gemini_custom_models: list[str] | None = None
     reasoning: str | None = None
 
 
@@ -151,7 +153,10 @@ class PullRequest(BaseModel):
 
 def _provider_key_configured(provider: str) -> bool:
     """そのプロバイダーのAPIキーが .env に設定済みか(真偽値のみ。キー本体は扱わない)。"""
-    return {"openai": bool(config.OPENAI_API_KEY)}.get(provider, False)
+    return {
+        "openai": bool(config.OPENAI_API_KEY),
+        "gemini": bool(config.GEMINI_API_KEY),
+    }.get(provider, False)
 
 
 def _settings_response(s: config.LLMSettings) -> dict:
@@ -162,11 +167,14 @@ def _settings_response(s: config.LLMSettings) -> dict:
         "model_local": s.model_local,
         "model_cloud": s.model_cloud,
         "model_openai": s.model_openai,
+        "model_gemini": s.model_gemini,
         "openai_custom_models": list(s.openai_custom_models),
+        "gemini_custom_models": list(s.gemini_custom_models),
         "reasoning": s.reasoning,
         # キー本体は返さない。「設定済みかどうか」だけをUIに知らせる
         "cloud_key_configured": bool(config.OLLAMA_API_KEY),
         "openai_key_configured": bool(config.OPENAI_API_KEY),
+        "gemini_key_configured": bool(config.GEMINI_API_KEY),
     }
 
 
@@ -186,14 +194,14 @@ async def put_settings(update: SettingsUpdate):
 
 @app.get("/api/models")
 async def list_models(source: str | None = None):
-    """指定ソース(local / cloud / openai)のモデル一覧を返す。
-    省略時は現在の実効ソース。local/cloudはOllama、openaiは推奨候補の固定リスト。"""
+    """指定ソース(local / cloud / openai / gemini)のモデル一覧を返す。
+    省略時は現在の実効ソース。local/cloudはOllama、openai/geminiは推奨候補の固定リスト。"""
     s = config.get_settings()
-    source = (source or ("openai" if s.provider == "openai" else s.mode)).lower()
-    # 外部プロバイダー(openai等): ダウンロード概念が無いため推奨候補を返す
+    source = (source or (s.provider if s.provider != "ollama" else s.mode)).lower()
+    # 外部プロバイダー(openai/gemini等): ダウンロード概念が無いため推奨候補を返す
     if source not in config.VALID_MODES:
         if source not in config.VALID_PROVIDERS:
-            raise HTTPException(400, "source は local / cloud / openai のいずれかです")
+            raise HTTPException(400, "source は local / cloud / openai / gemini のいずれかです")
         if not _provider_key_configured(source):
             return {"source": source, "models": [], "unavailable": f"{source} のAPIキーが未設定です (.env)"}
         return {"source": source, "models": providers.list_preset_models(source)}

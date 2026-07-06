@@ -27,6 +27,10 @@ logger = logging.getLogger(__name__)
 # gpt-4o系・gpt-4.1系など従来型は temperature を受け付ける(この正規表現に含めない)。
 _OPENAI_REASONING_RE = re.compile(r"^(?:o\d|gpt-5)")
 
+# Gemini 3以降の判定。思考の深さは thinking_level(low/medium/high) で指定し、
+# 2.5系の thinking_budget はオンオフ(0=オフ / -1=動的)として使う。
+_GEMINI_LEVEL_RE = re.compile(r"^gemini-(?:[3-9]|\d{2})")
+
 
 def _build_ollama(s: config.LLMSettings) -> BaseChatModel:
     from langchain_ollama import ChatOllama
@@ -61,7 +65,29 @@ def _build_openai(s: config.LLMSettings) -> BaseChatModel:
     return ChatOpenAI(**kwargs)
 
 
-_BUILDERS = {"ollama": _build_ollama, "openai": _build_openai}
+def _build_gemini(s: config.LLMSettings) -> BaseChatModel:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    if not config.GEMINI_API_KEY:
+        raise RuntimeError("GeminiのAPIキーが未設定です (.env の GEMINI_API_KEY)")
+    kwargs: dict[str, Any] = dict(model=s.model, google_api_key=config.GEMINI_API_KEY)
+    if _GEMINI_LEVEL_RE.match(s.model):
+        # Gemini 3以降: 思考の深さは thinking_level で指定(reasoning="auto" のときは
+        # 送らずモデル既定)。思考モデルでの temperature 変更はGoogleが非推奨のため送らない。
+        if s.reasoning in ("low", "medium", "high"):
+            kwargs["thinking_level"] = s.reasoning
+    else:
+        # Gemini 2.5系: thinking_budget で思考のオンオフ(0=オフ / -1=動的=オン)。
+        # 2.5-proはオフにできないが、プリセットに含めていないため許容する。
+        kwargs["temperature"] = 0.1
+        if s.reasoning == "false":
+            kwargs["thinking_budget"] = 0
+        elif s.reasoning == "true":
+            kwargs["thinking_budget"] = -1
+    return ChatGoogleGenerativeAI(**kwargs)
+
+
+_BUILDERS = {"ollama": _build_ollama, "openai": _build_openai, "gemini": _build_gemini}
 
 
 def build_chat_model(s: config.LLMSettings) -> BaseChatModel:
@@ -73,11 +99,11 @@ def build_chat_model(s: config.LLMSettings) -> BaseChatModel:
 async def supports_vision(s: config.LLMSettings) -> bool:
     """選択中モデルが画像入力(vision)に対応しているか。
     ollamaは /api/show のcapabilitiesで動的判定する。
-    openaiは現行のチャットモデルがすべてテキスト+画像入力に対応するため常にTrue
-    (接頭辞リストで判定するとgpt-6等の新モデルで即陳腐化し、対応済みモデルなのに
+    openai/geminiは現行のチャットモデルがすべてテキスト+画像入力に対応するため常にTrue
+    (接頭辞リストで判定すると新モデルで即陳腐化し、対応済みモデルなのに
     自己レビュー描画が無効化されてしまうため、リストは持たない)。テキスト専用モデルを
     自由入力欄で指定した場合のみ、画像添付時にAPIエラーになる点は許容する。"""
-    if s.provider == "openai":
+    if s.provider in ("openai", "gemini"):
         return True
     return await model_admin.model_supports_vision(s.mode, s.model)
 
@@ -85,8 +111,7 @@ async def supports_vision(s: config.LLMSettings) -> bool:
 def list_preset_models(provider: str) -> list[dict]:
     """設定UIのモデル一覧用。一覧APIを持たないプロバイダーの推奨候補を返す
     ([{name, size, vision}] 形式。sizeはダウンロード概念が無いのでNone)。
-    OpenAIの候補は config.toml(llm.openai_models)由来。現行OpenAIのチャットモデルは
-    すべて画像入力対応のため vision=True 固定。"""
-    if provider == "openai":
-        return [{"name": name, "size": None, "vision": True} for name in config.OPENAI_PRESET_MODELS]
-    return []
+    候補は config.toml(llm.openai_models / llm.gemini_models)由来。現行の
+    OpenAI/Geminiチャットモデルはすべて画像入力対応のため vision=True 固定。"""
+    presets = {"openai": config.OPENAI_PRESET_MODELS, "gemini": config.GEMINI_PRESET_MODELS}
+    return [{"name": name, "size": None, "vision": True} for name in presets.get(provider, ())]

@@ -6,6 +6,10 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { useAgentSocket } from './hooks/useAgentSocket'
 import type { FileInfo, HealthInfo } from './types'
 
+// 外部プロバイダーのヘッダー表示名と、キー未設定時に案内する .env の変数名
+const PROVIDER_TITLES: Record<string, string> = { openai: 'OpenAI', gemini: 'Gemini' }
+const PROVIDER_KEY_ENVS: Record<string, string> = { openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' }
+
 export default function App() {
   const [files, setFiles] = useState<FileInfo[]>([])
   const [activeFile, setActiveFile] = useState<string | null>(null)
@@ -106,9 +110,9 @@ export default function App() {
           <div className="header-status">
             <span className={`status-dot ${health?.backend_ok ? (health.model_ready ? 'on' : 'warn') : 'off'}`} />
             {health?.key_missing
-              ? `${health.provider === 'openai' ? 'OPENAI_API_KEY' : 'OLLAMA_API_KEY'} が未設定です (.env)`
-              : health?.provider === 'openai'
-                ? `OpenAI · ${health.model}`
+              ? `${PROVIDER_KEY_ENVS[health.provider] ?? 'OLLAMA_API_KEY'} が未設定です (.env)`
+              : health && health.provider !== 'ollama'
+                ? `${PROVIDER_TITLES[health.provider] ?? health.provider} · ${health.model}`
                 : health?.backend_ok
                   ? health.model_ready
                     ? `${health.mode === 'cloud' ? 'Ollama Cloud' : 'Ollama'} · ${health.model}`
@@ -139,7 +143,7 @@ export default function App() {
           connected={connected}
           statusWarning={
             health?.key_missing
-              ? `.env に ${health.provider === 'openai' ? 'OPENAI_API_KEY' : 'OLLAMA_API_KEY'} を設定して docker compose up -d を再実行してください。`
+              ? `.env に ${PROVIDER_KEY_ENVS[health.provider] ?? 'OLLAMA_API_KEY'} を設定して docker compose up -d を再実行してください。`
               : health && !health.model_ready && health.provider === 'ollama'
                 ? health.mode === 'cloud'
                   ? health.backend_ok

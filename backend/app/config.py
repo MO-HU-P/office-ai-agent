@@ -47,14 +47,15 @@ OLLAMA_LOCAL_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 # 鍵を持つユーザー向けの追加プロバイダー(任意)。Ollamaが主役・唯一のゼロ設定入口で、
 # ここは.envに鍵を入れた人だけのopt-in。鍵は.envのみで管理し、APIには出さない。
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 
 DEFAULT_LOCAL_MODEL = "qwen3.5:9b"
 DEFAULT_CLOUD_MODEL = "gpt-oss:120b"
 # DEFAULT_OPENAI_MODEL は OpenAIプリセット(config.toml)の先頭から後段で決める
 
 # provider: どのLLMプロバイダーを使うか。"ollama" は従来どおり mode(local/cloud)で
-# 実行場所を切り替える。"openai" 等の外部プロバイダーは mode を持たない(常にクラウド)。
-VALID_PROVIDERS = {"ollama", "openai"}
+# 実行場所を切り替える。"openai"/"gemini" 等の外部プロバイダーは mode を持たない(常にクラウド)。
+VALID_PROVIDERS = {"ollama", "openai", "gemini"}
 VALID_MODES = {"local", "cloud"}
 # "auto"=パラメータを送らずモデル既定に任せる / true・false=思考のオンオフ(qwen3等)
 # low・medium・high=思考の深さ(gpt-oss等のレベル対応モデル)
@@ -66,10 +67,10 @@ _MODEL_NAME_RE = re.compile(
 )
 
 
-# APIキーは "sk-" で始まる(OpenAI等)。どのプロバイダーのモデル名としても正当でないため、
-# すべてのモデル名欄(local/cloud/openai)で弾き、秘密情報を settings.json に保存させない
-# (キーは.envのみで管理)。Ollamaモデル名は例: qwen3:8b なので "sk-" 始まりは有り得ない。
-_API_KEY_LIKE_RE = re.compile(r"^sk-", re.IGNORECASE)
+# APIキーは "sk-"(OpenAI等) や "AIza"(Google) で始まる。どのプロバイダーのモデル名としても
+# 正当でないため、すべてのモデル名欄(local/cloud/openai/gemini)で弾き、秘密情報を
+# settings.json に保存させない(キーは.envのみで管理)。
+_API_KEY_LIKE_RE = re.compile(r"^(?:sk-|AIza)", re.IGNORECASE)
 
 
 def validate_model_name(name: str) -> str:
@@ -81,46 +82,54 @@ def validate_model_name(name: str) -> str:
     return name
 
 
-# OpenAIプロバイダーで設定UIに出す推奨モデル候補(config.toml の llm.openai_models で編集可)。
-# モデルは順次廃止されるため、コードに埋め込まずデータで持つ。廃止時はconfig.tomlを直せばよい。
+# 外部プロバイダーで設定UIに出す推奨モデル候補(config.toml の llm.openai_models /
+# llm.gemini_models で編集可)。モデルは順次廃止されるため、コードに埋め込まずデータで持つ。
+# 廃止時はconfig.tomlを直せばよい。
 _DEFAULT_OPENAI_PRESET = ("gpt-4o-mini",)
+_DEFAULT_GEMINI_PRESET = ("gemini-2.5-flash",)
 
 
-def _load_openai_presets(raw) -> list[str]:
+def _load_presets(raw, toml_key: str, fallback: tuple[str, ...]) -> list[str]:
     names: list[str] = []
     for item in raw if isinstance(raw, list) else ():
         try:
             names.append(validate_model_name(str(item)))
         except ValueError:
-            logger.warning("config.toml の openai_models に不正なモデル名: %s", str(item)[:64])
-    return names or list(_DEFAULT_OPENAI_PRESET)
+            logger.warning("config.toml の %s に不正なモデル名: %s", toml_key, str(item)[:64])
+    return names or list(fallback)
 
 
-OPENAI_PRESET_MODELS = _load_openai_presets(_llm.get("openai_models"))
-# 既定のOpenAIモデルはプリセットの先頭(config.tomlで制御可能)
+OPENAI_PRESET_MODELS = _load_presets(_llm.get("openai_models"), "openai_models", _DEFAULT_OPENAI_PRESET)
+GEMINI_PRESET_MODELS = _load_presets(_llm.get("gemini_models"), "gemini_models", _DEFAULT_GEMINI_PRESET)
+# 既定モデルは各プリセットの先頭(config.tomlで制御可能)
 DEFAULT_OPENAI_MODEL = OPENAI_PRESET_MODELS[0]
+DEFAULT_GEMINI_MODEL = GEMINI_PRESET_MODELS[0]
 
 
 @dataclass(frozen=True)
 class LLMSettings:
     """実行時に変更可能なLLM設定。設定UIまたはconfig.tomlから供給される。"""
 
-    provider: str        # "ollama" | "openai" (VALID_PROVIDERS)
+    provider: str        # "ollama" | "openai" | "gemini" (VALID_PROVIDERS)
     mode: str            # ollama時のみ有効: "local" | "cloud"
     model_local: str     # ollama localモードで使うモデル
     model_cloud: str     # ollama cloudモードで使うモデル
     model_openai: str    # openaiプロバイダーで使うモデル
+    model_gemini: str    # geminiプロバイダーで使うモデル
     reasoning: str       # VALID_REASONING のいずれか
     num_ctx: int         # ollama localモードのみ有効 (config.tomlでのみ変更)
-    # 設定UIで自由入力し保存したOpenAIモデル候補(settings.jsonに永続化)。プリセット
-    # (config.tomlのopenai_models)とは別で、こちらは削除可能。イミュータブルにtupleで保持。
+    # 設定UIで自由入力し保存した外部プロバイダーのモデル候補(settings.jsonに永続化)。
+    # プリセット(config.tomlの*_models)とは別で、こちらは削除可能。イミュータブルにtupleで保持。
     openai_custom_models: tuple[str, ...] = ()
+    gemini_custom_models: tuple[str, ...] = ()
 
     @property
     def model(self) -> str:
         """現在のプロバイダー/モードでの実効モデル名。"""
         if self.provider == "openai":
             return self.model_openai
+        if self.provider == "gemini":
+            return self.model_gemini
         return self.model_cloud if self.mode == "cloud" else self.model_local
 
     @property
@@ -157,6 +166,7 @@ def _load_initial_settings() -> LLMSettings:
     model_local = toml_model if provider == "ollama" and mode == "local" and toml_model else DEFAULT_LOCAL_MODEL
     model_cloud = toml_model if provider == "ollama" and mode == "cloud" and toml_model else DEFAULT_CLOUD_MODEL
     model_openai = toml_model if provider == "openai" and toml_model else DEFAULT_OPENAI_MODEL
+    model_gemini = toml_model if provider == "gemini" and toml_model else DEFAULT_GEMINI_MODEL
 
     settings = LLMSettings(
         provider=provider,
@@ -164,6 +174,7 @@ def _load_initial_settings() -> LLMSettings:
         model_local=model_local,
         model_cloud=model_cloud,
         model_openai=model_openai,
+        model_gemini=model_gemini,
         reasoning=reasoning,
         num_ctx=int(_llm.get("num_ctx", 8192)),
     )
@@ -190,22 +201,20 @@ def _apply_changes(settings: LLMSettings, changes: dict) -> LLMSettings:
         if mode not in VALID_MODES:
             raise ValueError(f"mode は local / cloud のいずれかです: {mode[:32]}")
         settings = replace(settings, mode=mode)
-    if "model_local" in changes and changes["model_local"] is not None:
-        settings = replace(settings, model_local=validate_model_name(str(changes["model_local"])))
-    if "model_cloud" in changes and changes["model_cloud"] is not None:
-        settings = replace(settings, model_cloud=validate_model_name(str(changes["model_cloud"])))
-    if "model_openai" in changes and changes["model_openai"] is not None:
-        settings = replace(settings, model_openai=validate_model_name(str(changes["model_openai"])))
-    if "openai_custom_models" in changes and changes["openai_custom_models"] is not None:
-        raw = changes["openai_custom_models"]
-        if not isinstance(raw, list):
-            raise ValueError("openai_custom_models はリスト形式で指定してください")
-        cleaned: list[str] = []
-        for item in raw:
-            name = validate_model_name(str(item))
-            if name not in cleaned:
-                cleaned.append(name)
-        settings = replace(settings, openai_custom_models=tuple(cleaned))
+    for model_field in ("model_local", "model_cloud", "model_openai", "model_gemini"):
+        if model_field in changes and changes[model_field] is not None:
+            settings = replace(settings, **{model_field: validate_model_name(str(changes[model_field]))})
+    for custom_field in ("openai_custom_models", "gemini_custom_models"):
+        if custom_field in changes and changes[custom_field] is not None:
+            raw = changes[custom_field]
+            if not isinstance(raw, list):
+                raise ValueError(f"{custom_field} はリスト形式で指定してください")
+            cleaned: list[str] = []
+            for item in raw:
+                name = validate_model_name(str(item))
+                if name not in cleaned:
+                    cleaned.append(name)
+            settings = replace(settings, **{custom_field: tuple(cleaned)})
     if "reasoning" in changes and changes["reasoning"] is not None:
         reasoning = str(changes["reasoning"]).lower()
         if reasoning not in VALID_REASONING:
@@ -247,7 +256,9 @@ def _persist(settings: LLMSettings) -> None:
         "model_local": settings.model_local,
         "model_cloud": settings.model_cloud,
         "model_openai": settings.model_openai,
+        "model_gemini": settings.model_gemini,
         "openai_custom_models": list(settings.openai_custom_models),
+        "gemini_custom_models": list(settings.gemini_custom_models),
         "reasoning": settings.reasoning,
     }
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")

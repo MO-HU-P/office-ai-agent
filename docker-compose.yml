@@ -25,6 +25,7 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434   # localモード時の接続先
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}    # Ollama Cloud用 (.env)
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}    # OpenAIプロバイダー用・任意 (.env)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}    # Google Geminiプロバイダー用・任意 (.env)
     volumes:
       - ./workspace:/workspace
       - ./config.toml:/app/config.toml:ro

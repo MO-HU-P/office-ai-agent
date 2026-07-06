@@ -8,6 +8,7 @@ python-pptx>=1.0
 langchain-core>=0.3,<2
 langchain-ollama>=0.3,<2
 langchain-openai>=0.2,<2
+langchain-google-genai>=2.1,<4
 pandas>=2.2
 numpy>=2.0
 scipy>=1.14

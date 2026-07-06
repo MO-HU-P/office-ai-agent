@@ -1,14 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { deleteModel, fetchModels, fetchSettings, pullModel, updateSettings } from '../api'
-import type { LLMProvider, ModelInfo, ModelSource, SettingsInfo } from '../types'
+import type { ExternalProvider, LLMProvider, ModelInfo, ModelSource, SettingsInfo } from '../types'
 
 // 追加入力欄のサジェスト(datalist)。自由入力も可能。
-// openaiの候補は config.toml(llm.openai_models)由来の一覧から動的に出すため、ここは空。
+// 外部プロバイダーの候補は config.toml(llm.*_models)由来の一覧から動的に出すため、ここは空。
 const SUGGESTED: Record<ModelSource, string[]> = {
   local: ['gpt-oss:20b', 'qwen3.5:9b', 'gemma4:12b'],
   cloud: ['gpt-oss:120b', 'gemma4:31b', 'qwen3.5:397b', 'nemotron-3-ultra'],
   openai: [],
+  gemini: [],
 }
+
+// 追加入力欄のプレースホルダーに出すモデル名の例
+const ADD_EXAMPLE: Record<ModelSource, string> = {
+  local: 'qwen3:8b',
+  cloud: 'gpt-oss:120b',
+  openai: 'gpt-4o-mini',
+  gemini: 'gemini-2.5-flash',
+}
+
+// 外部プロバイダー(=自由入力・候補保存ができるソース)かの判定。TSの型絞り込みにも使う
+const isExternalSource = (src: ModelSource): src is ExternalProvider => src !== 'local' && src !== 'cloud'
 
 // 上段「AIの実行場所」= このパソコン(手元) / クラウド(ネット越しの高性能AI)の2択。
 // プロバイダーが何個増えてもこの2枚は固定で、増えるのは下段「利用するサービス」側。
@@ -27,12 +39,14 @@ interface CloudService {
   provider: LLMProvider
   source: ModelSource
   title: string
-  requiresKey?: 'openai_key_configured' // 表示条件に使う settings のフラグ名
+  keyEnv: string // キー未設定時の警告に出す .env の変数名
+  requiresKey?: 'openai_key_configured' | 'gemini_key_configured' // 表示条件に使う settings のフラグ名
 }
 const CLOUD_SERVICES: CloudService[] = [
-  { key: 'ollama-cloud', provider: 'ollama', source: 'cloud', title: 'Ollama Cloud' },
-  { key: 'openai', provider: 'openai', source: 'openai', title: 'OpenAI', requiresKey: 'openai_key_configured' },
-  // 追加例: { key: 'anthropic', provider: 'anthropic', source: 'anthropic', title: 'Anthropic (Claude)', requiresKey: 'anthropic_key_configured' },
+  { key: 'ollama-cloud', provider: 'ollama', source: 'cloud', title: 'Ollama Cloud', keyEnv: 'OLLAMA_API_KEY' },
+  { key: 'openai', provider: 'openai', source: 'openai', title: 'OpenAI', keyEnv: 'OPENAI_API_KEY', requiresKey: 'openai_key_configured' },
+  { key: 'gemini', provider: 'gemini', source: 'gemini', title: 'Google Gemini', keyEnv: 'GEMINI_API_KEY', requiresKey: 'gemini_key_configured' },
+  // 追加例: { key: 'anthropic', provider: 'anthropic', source: 'anthropic', title: 'Anthropic (Claude)', keyEnv: 'ANTHROPIC_API_KEY', requiresKey: 'anthropic_key_configured' },
 ]
 
 // gpt-oss系は思考の深さ(low/medium/high)指定、それ以外のOllamaはオン/オフ指定
@@ -41,6 +55,9 @@ const isLevelModel = (model: string) => model.startsWith('gpt-oss')
 // backend providers.py の _OPENAI_REASONING_RE と対応させること(gpt-4o系/gpt-4.1系は
 // temperature固定で思考の深さを持たないため、設定を出しても効かない)。
 const isOpenAIReasoningModel = (model: string) => /^(?:o\d|gpt-5)/.test(model)
+// Gemini 3以降は思考の深さ(low/medium/high)指定、2.5系はオン/オフ指定。
+// backend providers.py の _GEMINI_LEVEL_RE と対応させること。
+const isGeminiLevelModel = (model: string) => /^gemini-(?:[3-9]|\d{2})/.test(model)
 
 const REASONING_OPTIONS = {
   level: [
@@ -78,9 +95,10 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
   const [mode, setMode] = useState<'local' | 'cloud'>('cloud')
   const [modelLocal, setModelLocal] = useState('')
   const [modelCloud, setModelCloud] = useState('')
-  const [modelOpenai, setModelOpenai] = useState('')
-  // 自由入力し保存したOpenAIモデル候補(プリセットとは別・削除可能)。保存はsettings.json
-  const [customOpenai, setCustomOpenai] = useState<string[]>([])
+  // 外部プロバイダーごとの選択モデル
+  const [modelExternal, setModelExternal] = useState<Record<ExternalProvider, string>>({ openai: '', gemini: '' })
+  // 自由入力し保存した外部プロバイダーのモデル候補(プリセットとは別・削除可能)。保存はsettings.json
+  const [customExternal, setCustomExternal] = useState<Record<ExternalProvider, string[]>>({ openai: [], gemini: [] })
   const [reasoning, setReasoning] = useState('auto')
   const [models, setModels] = useState<Partial<Record<ModelSource, ModelInfo[]>>>({})
   const [unavailable, setUnavailable] = useState<Partial<Record<ModelSource, string>>>({})
@@ -91,7 +109,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
   const abortRef = useRef<AbortController | null>(null)
 
   // 現在選ばれている取得元(Ollamaは mode、外部プロバイダーはその名前)
-  const source: ModelSource = provider === 'openai' ? 'openai' : mode
+  const source: ModelSource = provider === 'ollama' ? mode : provider
 
   const loadModels = useCallback((src: ModelSource) => {
     fetchModels(src)
@@ -110,10 +128,10 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
         setMode(s.mode)
         setModelLocal(s.model_local)
         setModelCloud(s.model_cloud)
-        setModelOpenai(s.model_openai)
-        setCustomOpenai(s.openai_custom_models ?? [])
+        setModelExternal({ openai: s.model_openai, gemini: s.model_gemini })
+        setCustomExternal({ openai: s.openai_custom_models ?? [], gemini: s.gemini_custom_models ?? [] })
         setReasoning(s.reasoning)
-        loadModels(s.provider === 'openai' ? 'openai' : s.mode)
+        loadModels(s.provider === 'ollama' ? s.mode : s.provider)
       })
       .catch(() => setError('設定を読み込めませんでした'))
   }, [loadModels])
@@ -134,14 +152,24 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const currentModel = provider === 'openai' ? modelOpenai : mode === 'cloud' ? modelCloud : modelLocal
-  const setCurrentModel = provider === 'openai' ? setModelOpenai : mode === 'cloud' ? setModelCloud : setModelLocal
-  // 「回答の考え方」を出すか。Ollamaは常に。OpenAIは推論モデル(gpt-5系/o系)のときだけ
+  const currentModel =
+    provider === 'ollama' ? (mode === 'cloud' ? modelCloud : modelLocal) : modelExternal[provider]
+  const setCurrentModel = useCallback(
+    (name: string) => {
+      if (provider === 'ollama') (mode === 'cloud' ? setModelCloud : setModelLocal)(name)
+      else setModelExternal((prev) => ({ ...prev, [provider]: name }))
+    },
+    [provider, mode],
+  )
+  // 「回答の考え方」を出すか。Ollama/Geminiは常に。OpenAIは推論モデル(gpt-5系/o系)のときだけ
   // (gpt-4o系/gpt-4.1系はreasoning_effort非対応でtemperature固定のため、選ばせても効かない)
   const showReasoning = provider !== 'openai' || isOpenAIReasoningModel(currentModel)
-  // OpenAIの推論モデルは段階指定。Ollamaは gpt-oss系のみ段階、他はオン/オフ
+  // OpenAIの推論モデルと Gemini 3以降は段階指定。Gemini 2.5系はオン/オフ。
+  // Ollamaは gpt-oss系のみ段階、他はオン/オフ
   const reasoningOptions =
-    provider === 'openai' || isLevelModel(currentModel) ? REASONING_OPTIONS.level : REASONING_OPTIONS.toggle
+    provider === 'openai' || (provider === 'gemini' ? isGeminiLevelModel(currentModel) : isLevelModel(currentModel))
+      ? REASONING_OPTIONS.level
+      : REASONING_OPTIONS.toggle
 
   // 非表示のとき、およびモデル種別が変わって選択中のreasoningが選択肢から消えたら「自動」へ戻す
   useEffect(() => {
@@ -152,14 +180,17 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
 
   // 上段(場所)と下段(サービス)の選択状態を provider/mode から導出する
   const location: Location = provider === 'ollama' && mode === 'local' ? 'local' : 'cloud'
-  const cloudKey = provider === 'ollama' ? 'ollama-cloud' : provider // openai → 'openai'(将来 anthropic 等も provider 名がキー)
+  const cloudKey = provider === 'ollama' ? 'ollama-cloud' : provider // openai/gemini 等は provider 名がキー
   // 鍵未設定のサービスは隠す(現在選択中は残す)。Ollama Cloud は鍵不要扱いで常に表示
   const visibleCloudServices = CLOUD_SERVICES.filter((s) => {
     if (cloudKey === s.key) return true
     if (!s.requiresKey) return true
     return Boolean(settings?.[s.requiresKey])
   })
-  const keyConfigured = provider === 'openai' ? settings?.openai_key_configured : settings?.cloud_key_configured
+  const selectedService = CLOUD_SERVICES.find((s) => s.key === cloudKey)
+  const keyConfigured = selectedService?.requiresKey
+    ? Boolean(settings?.[selectedService.requiresKey])
+    : Boolean(settings?.cloud_key_configured)
 
   // 下段のサービスを選ぶ(Ollamaはcloud、OpenAI等もcloud固定で統一)
   const selectCloudService = (svc: CloudService) => {
@@ -177,28 +208,29 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
     }
   }
 
-  // OpenAIはプリセット(config.toml由来)＋自由入力の追加分(削除可能)を並べる。
-  // 現行OpenAIのチャットモデルはすべて画像対応なので追加分は vision=true 扱い。
+  // 外部プロバイダーはプリセット(config.toml由来)＋自由入力の追加分(削除可能)を並べる。
+  // 現行の外部プロバイダーのチャットモデルはすべて画像対応なので追加分は vision=true 扱い。
   const listed = useMemo<(ModelInfo & { custom?: boolean })[]>(() => {
     const base = models[source] ?? []
-    if (source !== 'openai') return base
+    if (!isExternalSource(source)) return base
     const presetNames = new Set(base.map((m) => m.name))
-    const extras = customOpenai
+    const extras = customExternal[source]
       .filter((n) => !presetNames.has(n))
       .map((n) => ({ name: n, size: null, vision: true, custom: true }))
     return [...base, ...extras]
-  }, [models, source, customOpenai])
+  }, [models, source, customExternal])
   // 選択中モデルを先頭に出す(長い一覧でも現在の選択がすぐ見えるように)。
   // 一覧に無い場合(未ダウンロード等)も行として表示する
   const rows = useMemo(() => {
     const rest = listed.filter((m) => m.name !== currentModel).map((m) => ({ ...m, missing: false }))
     if (!currentModel) return rest
     const selected = listed.find((m) => m.name === currentModel)
+    const external = isExternalSource(source)
     return selected
       ? [{ ...selected, missing: false }, ...rest]
       : [
-          // openaiで一覧に無い選択中モデル＝自由入力分。画像対応・削除可能として扱う
-          { name: currentModel, size: null, vision: source === 'openai', custom: source === 'openai', missing: source === 'local' },
+          // 外部プロバイダーで一覧に無い選択中モデル＝自由入力分。画像対応・削除可能として扱う
+          { name: currentModel, size: null, vision: external, custom: external, missing: source === 'local' },
           ...rest,
         ]
   }, [listed, currentModel, source])
@@ -239,9 +271,9 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
   const handleAdd = useCallback(() => {
     const name = addName.trim()
     if (!name) return
-    // APIキー(sk-...)の貼り付け事故は、ローカル/クラウド/OpenAIの全欄で弾く
+    // APIキー(sk-... / AIza...)の貼り付け事故は、全プロバイダーの全欄で弾く
     // (秘密情報を settings.json に保存しないため。サーバー側でも二重に検証する)
-    if (/^sk-/i.test(name)) {
+    if (/^(sk-|AIza)/i.test(name)) {
       setError('APIキーのような値は入力できません。モデル名を入力してください。')
       return
     }
@@ -263,25 +295,30 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
     }
     setError(null)
     // 追加分は候補として保存(プリセットと重複しないもののみ)。保存は「保存」ボタン押下時
-    if (source === 'openai') {
-      const presetNames = new Set((models.openai ?? []).map((m) => m.name))
+    if (isExternalSource(source)) {
+      const presetNames = new Set((models[source] ?? []).map((m) => m.name))
       if (!presetNames.has(name)) {
-        setCustomOpenai((prev) => (prev.includes(name) ? prev : [...prev, name]))
+        setCustomExternal((prev) =>
+          prev[source].includes(name) ? prev : { ...prev, [source]: [...prev[source], name] },
+        )
       }
     }
     setCurrentModel(name)
     setAddName('')
   }, [addName, source, models, startPull, setCurrentModel])
 
-  // 自由入力したOpenAIモデル候補を一覧から削除(プリセットは対象外)。反映は「保存」押下時。
-  const handleDeleteCustomOpenai = useCallback(
+  // 自由入力した外部プロバイダーのモデル候補を一覧から削除(プリセットは対象外)。反映は「保存」押下時。
+  const handleDeleteCustom = useCallback(
     (name: string) => {
+      if (!isExternalSource(source)) return
       setError(null)
-      setCustomOpenai((prev) => prev.filter((n) => n !== name))
+      setCustomExternal((prev) => ({ ...prev, [source]: prev[source].filter((n) => n !== name) }))
       // 削除したモデルを選択中だった場合は既定(プリセット先頭)へ戻す
-      if (modelOpenai === name) setModelOpenai(models.openai?.[0]?.name ?? 'gpt-4o-mini')
+      if (modelExternal[source] === name) {
+        setModelExternal((prev) => ({ ...prev, [source]: models[source]?.[0]?.name ?? '' }))
+      }
     },
-    [modelOpenai, models],
+    [source, modelExternal, models],
   )
 
   const handleDelete = useCallback(
@@ -307,8 +344,11 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
         mode,
         model_local: modelLocal,
         model_cloud: modelCloud,
-        model_openai: modelOpenai,
-        openai_custom_models: customOpenai,
+        // 空文字は「未選択」なので送らない(サーバー側の検証エラーを避ける)
+        model_openai: modelExternal.openai || undefined,
+        model_gemini: modelExternal.gemini || undefined,
+        openai_custom_models: customExternal.openai,
+        gemini_custom_models: customExternal.gemini,
         reasoning,
       })
       onSaved()
@@ -317,7 +357,7 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
       setError(e instanceof Error ? e.message : '保存に失敗しました')
       setSaving(false)
     }
-  }, [provider, mode, modelLocal, modelCloud, modelOpenai, customOpenai, reasoning, onSaved, onClose])
+  }, [provider, mode, modelLocal, modelCloud, modelExternal, customExternal, reasoning, onSaved, onClose])
 
   return (
     <div className="dialog-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -375,17 +415,9 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
 
               {location === 'cloud' && !keyConfigured && (
                 <p className="settings-warning">
-                  {provider === 'openai' ? (
-                    <>
-                      OpenAIの利用には APIキーが必要です。<code>.env</code> ファイルに{' '}
-                      <code>OPENAI_API_KEY</code> を設定してください（安全のため、この画面からは設定できません）。
-                    </>
-                  ) : (
-                    <>
-                      クラウド利用には APIキーが必要です。<code>.env</code> ファイルに{' '}
-                      <code>OLLAMA_API_KEY</code> を設定してください（安全のため、この画面からは設定できません）。
-                    </>
-                  )}
+                  {selectedService ? `${selectedService.title}の利用` : 'クラウド利用'}には APIキーが必要です。
+                  <code>.env</code> ファイルに <code>{selectedService?.keyEnv ?? 'OLLAMA_API_KEY'}</code>{' '}
+                  を設定してください（安全のため、この画面からは設定できません）。
                 </p>
               )}
             </section>
@@ -428,13 +460,13 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
                           </svg>
                         </button>
                       )}
-                      {/* 自由入力で追加したOpenAIモデルは一覧から削除できる(プリセットは削除不可) */}
-                      {source === 'openai' && m.custom && (
+                      {/* 自由入力で追加した外部プロバイダーのモデルは一覧から削除できる(プリセットは削除不可) */}
+                      {isExternalSource(source) && m.custom && (
                         <button
                           className="icon-btn small"
                           onClick={(e) => {
                             e.preventDefault()
-                            handleDeleteCustomOpenai(m.name)
+                            handleDeleteCustom(m.name)
                           }}
                           aria-label={`${m.name} を一覧から削除`}
                           title="このモデルを一覧から削除"
@@ -472,14 +504,18 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
                 <div className="model-add">
                   <input
                     list={`model-suggest-${source}`}
-                    placeholder={source === 'local' ? 'モデル名を入力してダウンロード (例: qwen3:8b)' : 'モデル名を入力して追加 (例: gpt-4o-mini)'}
+                    placeholder={
+                      source === 'local'
+                        ? `モデル名を入力してダウンロード (例: ${ADD_EXAMPLE.local})`
+                        : `モデル名を入力して追加 (例: ${ADD_EXAMPLE[source]})`
+                    }
                     value={addName}
                     onChange={(e) => setAddName(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
                   />
                   <datalist id={`model-suggest-${source}`}>
-                    {/* openaiの候補は config.toml 由来の一覧から出す(静的リストを陳腐化させない) */}
-                    {(source === 'openai' ? listed.map((m) => m.name) : SUGGESTED[source]).map((n) => (
+                    {/* 外部プロバイダーの候補は config.toml 由来の一覧から出す(静的リストを陳腐化させない) */}
+                    {(isExternalSource(source) ? listed.map((m) => m.name) : SUGGESTED[source]).map((n) => (
                       <option key={n} value={n} />
                     ))}
                   </datalist>
