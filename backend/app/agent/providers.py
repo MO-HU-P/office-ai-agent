@@ -70,7 +70,9 @@ def _build_gemini(s: config.LLMSettings) -> BaseChatModel:
 
     if not config.GEMINI_API_KEY:
         raise RuntimeError("GeminiのAPIキーが未設定です (.env の GEMINI_API_KEY)")
-    kwargs: dict[str, Any] = dict(model=s.model, google_api_key=config.GEMINI_API_KEY)
+    # max_retries=0: SDK内部の指数バックオフ(2→4→8…秒)を無効化し、リトライ制御は
+    # loop.py に一元化する。これを外すと、403等の恒久エラーで数分ハングしてしまう。
+    kwargs: dict[str, Any] = dict(model=s.model, google_api_key=config.GEMINI_API_KEY, max_retries=0)
     if _GEMINI_LEVEL_RE.match(s.model):
         # Gemini 3以降: 思考の深さは thinking_level で指定(reasoning="auto" のときは
         # 送らずモデル既定)。思考モデルでの temperature 変更はGoogleが非推奨のため送らない。

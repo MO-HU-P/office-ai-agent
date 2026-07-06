@@ -90,6 +90,24 @@ def _describe_error(e: Exception) -> str:
     return " ".join(parts)
 
 
+def _chunk_text(content: Any) -> str:
+    """ストリームチャンクの content から可視テキストだけを取り出す。
+    Ollama/OpenAIは文字列で届くが、Gemini 3系はコンテンツブロックのリスト
+    ([{'type':'text','text':...}] や thinking ブロック等)で届くため、
+    text ブロックのみを連結する(thinking等の非表示ブロックは可視化しない)。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text") or "")
+        return "".join(parts)
+    return ""
+
+
 def build_llm():
     """現在の設定に対応するLLMを生成する(providersがOllama/OpenAI等を出し分ける)。
     依頼のたびに現在の設定を読むため、設定UIでの変更が再起動なしで反映される。"""
@@ -228,8 +246,9 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
                         chunk = await asyncio.wait_for(anext(stream), timeout=min(config.LLM_IDLE_TIMEOUT, remaining))
                     except StopAsyncIteration:
                         break
-                    if isinstance(chunk.content, str) and chunk.content:
-                        visible = think_filter.feed(chunk.content)
+                    text = _chunk_text(chunk.content)
+                    if text:
+                        visible = think_filter.feed(text)
                         if visible:
                             await emit({"type": "token", "content": visible})
                             emitted = True
@@ -280,8 +299,12 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
             await emit({"type": "error", "message": "LLMから応答がありませんでした"})
             break
 
+        # contentは文字列(Ollama/OpenAI)またはコンテンツブロックのリスト(Gemini 3系)。
+        # リストはそのまま保持する。潰すと最終回答が履歴から消え、Gemini 3の思考署名
+        # (signatureブロック)も失われてツール呼び出しの多ターン継続が壊れるため。
+        ai_content = gathered.content if isinstance(gathered.content, (str, list)) else ""
         ai_msg = AIMessage(
-            content=gathered.content if isinstance(gathered.content, str) else "",
+            content=ai_content,
             tool_calls=_drop_broken_tool_calls(gathered.tool_calls or []),
         )
         messages.append(ai_msg)
