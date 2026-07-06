@@ -1,7 +1,8 @@
-"""エージェント本体: ChatOllama + ツールによるReActループ。
+"""エージェント本体: LLM(providersが出し分け) + ツールによるReActループ。
 
 LangGraphのprebuiltではなく素のループを実装している。ローカルLLMは挙動の揺れが
 大きく、ストリーミング・イベント発行・エラー回復を細かく制御したいため。
+LLMの生成はプロバイダー非依存(agent/providers.py)に集約している。
 """
 import asyncio
 import base64
@@ -12,11 +13,10 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_ollama import ChatOllama
 from pydantic import ValidationError
 
 from .. import config
-from ..services.model_admin import model_supports_vision
+from . import providers
 from ..services.workspace_watch import snapshot_workspace, diff_snapshots
 from .tools.check_tools import CHECK_TOOLS
 from .tools.excel_tools import EXCEL_TOOLS
@@ -74,24 +74,26 @@ def _is_plan_restricted(e: Exception) -> bool:
     return "requires a subscription" in str(e).lower()
 
 
-def build_llm() -> ChatOllama:
-    # 依頼のたびに現在の設定を読むため、設定UIでの変更が再起動なしで反映される
-    s = config.get_settings()
-    kwargs: dict[str, Any] = dict(
-        model=s.model,
-        base_url=s.base_url,
-        temperature=0.1,
-    )
-    if s.mode == "cloud":
-        kwargs["client_kwargs"] = {"headers": s.headers()}
-    else:
-        kwargs["num_ctx"] = s.num_ctx
-    if s.reasoning in ("true", "false"):
-        kwargs["reasoning"] = s.reasoning == "true"
-    elif s.reasoning in ("low", "medium", "high"):
-        # gpt-oss等のレベル対応モデル向け。boolean のみ対応のモデルには "auto"/"true"/"false" を使う
-        kwargs["reasoning"] = s.reasoning
-    return ChatOllama(**kwargs)
+def _describe_error(e: Exception) -> str:
+    """例外を、HTTPステータス付きの短い文字列にする(ログでの原因切り分け用)。
+    Ollama CloudのResponseErrorは .status_code と .error(サーバーメッセージ)を持つ。
+    これを記録しておくと、429(レート制限)・500(容量不足)・502等を区別できる。
+    ※シークレットは log_setup の RedactSecretsFilter が墨消しするので、そのまま出してよい。"""
+    parts = [type(e).__name__]
+    status = getattr(e, "status_code", None)
+    if status is not None:
+        parts.append(f"status={status}")
+    # ollamaのResponseErrorはサーバー由来メッセージを .error に持つ(無ければ str(e))
+    msg = getattr(e, "error", None) or str(e)
+    if msg:
+        parts.append(_shorten(msg, 200))
+    return " ".join(parts)
+
+
+def build_llm():
+    """現在の設定に対応するLLMを生成する(providersがOllama/OpenAI等を出し分ける)。
+    依頼のたびに現在の設定を読むため、設定UIでの変更が再起動なしで反映される。"""
+    return providers.build_chat_model(config.get_settings())
 
 
 class ThinkFilter:
@@ -197,7 +199,7 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
     s = config.get_settings()
     # 画像を見られるモデルのときだけ render_page を有効化する
     # (テキスト専用モデルに画像入りメッセージを送るとエラーになるため)
-    vision = await model_supports_vision(s.mode, s.model)
+    vision = await providers.supports_vision(s)
     tools = ALL_TOOLS + RENDER_TOOLS if vision else ALL_TOOLS
     tool_map = {t.name: t for t in tools}
     system_prompt = (SYSTEM_PROMPT + VISION_RULE) if vision else SYSTEM_PROMPT
@@ -209,17 +211,21 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
         failed = False
         # 一時的なサーバーエラー(Ollama Cloudの500など)に備え、
         # トークンをまだ出力していない段階での失敗のみリトライする
-        for attempt in range(3):
+        for attempt in range(config.LLM_MAX_ATTEMPTS):
             emitted = False
             gathered = None
             think_filter = ThinkFilter()  # リトライで最初から流し直すため、途中状態を持ち越さない
             try:
-                # Ollama Cloudはまれに応答を返さないまま無言で止まるため、
-                # 「次のチャンクが一定時間来ない」場合は打ち切ってリトライに回す
+                # Ollama Cloudはまれに応答を返さないまま無言で止まる/推論だけ延々流し続けるため、
+                # 「次のチャンクが来ない(idle)」と「応答全体が長すぎる(step)」の両方で打ち切りリトライに回す
                 stream = aiter(llm.astream(messages))
+                deadline = asyncio.get_running_loop().time() + config.LLM_STEP_TIMEOUT
                 while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    if remaining <= 0:
+                        raise TimeoutError(f"LLM応答が{config.LLM_STEP_TIMEOUT:.0f}秒を超えました")
                     try:
-                        chunk = await asyncio.wait_for(anext(stream), timeout=config.LLM_IDLE_TIMEOUT)
+                        chunk = await asyncio.wait_for(anext(stream), timeout=min(config.LLM_IDLE_TIMEOUT, remaining))
                     except StopAsyncIteration:
                         break
                     if isinstance(chunk.content, str) and chunk.content:
@@ -231,13 +237,17 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
                 break
             except Exception as e:
                 if _is_model_not_found(e):
-                    model = config.get_settings().model
+                    s = config.get_settings()
+                    model = s.model
                     logger.error("モデルが見つかりません (提供終了または入力ミス): %s", model)
-                    await emit({
-                        "type": "error",
-                        "message": f"AIモデル「{model}」が見つかりません。提供終了した可能性があります。"
-                                   "右上の設定（歯車アイコン）から別のモデルを選んでください。",
-                    })
+                    if s.provider == "openai":
+                        # OpenAIは自由入力できるため、まず入力ミスを疑ってもらう
+                        message = (f"AIモデル「{model}」が見つかりません。モデル名が正しいか確認して、"
+                                   "右上の設定（歯車アイコン）から選び直してください。")
+                    else:
+                        message = (f"AIモデル「{model}」が見つかりません。提供終了した可能性があります。"
+                                   "右上の設定（歯車アイコン）から別のモデルを選んでください。")
+                    await emit({"type": "error", "message": message})
                     failed = True
                     break
                 if _is_plan_restricted(e):
@@ -251,13 +261,18 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
                     })
                     failed = True
                     break
-                if emitted or attempt == 2:
-                    logger.exception("LLM呼び出しに失敗")
+                if emitted or attempt == config.LLM_MAX_ATTEMPTS - 1:
+                    logger.exception("LLM呼び出しに失敗 (%s)", _describe_error(e))
                     await emit({"type": "error", "message": "AIモデルの呼び出しに失敗しました。しばらくして再度お試しください。"})
                     failed = True
                     break
-                logger.warning("LLM呼び出しに失敗、リトライします (%d/2): %s", attempt + 1, type(e).__name__)
-                await asyncio.sleep(2 * (attempt + 1))
+                # 500の波が続くことがあるため指数バックオフ(上限あり)で間隔を空けて撃ち直す
+                backoff = min(2 * 2 ** attempt, config.LLM_RETRY_BACKOFF_CAP)
+                logger.warning(
+                    "LLM呼び出しに失敗、%.0f秒後にリトライします (%d/%d): %s",
+                    backoff, attempt + 1, config.LLM_MAX_ATTEMPTS - 1, _describe_error(e),
+                )
+                await asyncio.sleep(backoff)
         if failed:
             break
 

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import config
+from .agent import providers
 from .agent.loop import run_agent
 from .atomic import atomic_save
 from .log_setup import configure_logging
@@ -64,12 +65,12 @@ async def _auto_pull_local_model(model: str):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     s = config.get_settings()
-    if s.mode == "local":
+    if s.provider == "ollama" and s.mode == "local":
         task = asyncio.create_task(_auto_pull_local_model(s.model))
         _background_tasks.add(task)
         task.add_done_callback(_background_tasks.discard)
     else:
-        logger.info("LLM: cloudモード (model=%s, base=%s)", s.model, s.base_url)
+        logger.info("LLM: provider=%s (model=%s)", s.provider, s.model)
     yield
 
 
@@ -87,6 +88,18 @@ FILE_TYPES = {".docx": "word", ".xlsx": "excel", ".pptx": "powerpoint", ".csv": 
 @app.get("/api/health")
 async def health():
     s = config.get_settings()
+    if s.provider != "ollama":
+        # 外部プロバイダー(openai等)は鍵の有無だけを見る(毎回の疎通pingで課金しない)
+        key_missing = not _provider_key_configured(s.provider)
+        return {
+            "status": "ok",
+            "provider": s.provider,
+            "mode": s.mode,
+            "backend_ok": not key_missing,
+            "key_missing": key_missing,
+            "model": s.model,
+            "model_ready": not key_missing,
+        }
     key_missing = s.mode == "cloud" and not config.OLLAMA_API_KEY
     ollama_ok = False
     models: list[str] = []
@@ -109,8 +122,9 @@ async def health():
         model_ready = model_found
     return {
         "status": "ok",
+        "provider": "ollama",
         "mode": s.mode,
-        "ollama": ollama_ok,
+        "backend_ok": ollama_ok,
         "key_missing": key_missing,
         "model": s.model,
         "model_ready": model_ready,
@@ -122,9 +136,12 @@ async def health():
 
 
 class SettingsUpdate(BaseModel):
+    provider: str | None = None
     mode: str | None = None
     model_local: str | None = None
     model_cloud: str | None = None
+    model_openai: str | None = None
+    openai_custom_models: list[str] | None = None
     reasoning: str | None = None
 
 
@@ -132,15 +149,24 @@ class PullRequest(BaseModel):
     name: str
 
 
+def _provider_key_configured(provider: str) -> bool:
+    """そのプロバイダーのAPIキーが .env に設定済みか(真偽値のみ。キー本体は扱わない)。"""
+    return {"openai": bool(config.OPENAI_API_KEY)}.get(provider, False)
+
+
 def _settings_response(s: config.LLMSettings) -> dict:
     return {
+        "provider": s.provider,
         "mode": s.mode,
         "model": s.model,
         "model_local": s.model_local,
         "model_cloud": s.model_cloud,
+        "model_openai": s.model_openai,
+        "openai_custom_models": list(s.openai_custom_models),
         "reasoning": s.reasoning,
         # キー本体は返さない。「設定済みかどうか」だけをUIに知らせる
         "cloud_key_configured": bool(config.OLLAMA_API_KEY),
+        "openai_key_configured": bool(config.OPENAI_API_KEY),
     }
 
 
@@ -159,18 +185,26 @@ async def put_settings(update: SettingsUpdate):
 
 
 @app.get("/api/models")
-async def list_models(mode: str | None = None):
-    """指定モード(省略時は現在のモード)のモデル一覧を返す。"""
-    mode = (mode or config.get_settings().mode).lower()
-    if mode not in config.VALID_MODES:
-        raise HTTPException(400, "mode は local / cloud のいずれかです")
-    if mode == "cloud" and not config.OLLAMA_API_KEY:
-        return {"mode": mode, "models": [], "unavailable": "APIキーが未設定です (.env)"}
+async def list_models(source: str | None = None):
+    """指定ソース(local / cloud / openai)のモデル一覧を返す。
+    省略時は現在の実効ソース。local/cloudはOllama、openaiは推奨候補の固定リスト。"""
+    s = config.get_settings()
+    source = (source or ("openai" if s.provider == "openai" else s.mode)).lower()
+    # 外部プロバイダー(openai等): ダウンロード概念が無いため推奨候補を返す
+    if source not in config.VALID_MODES:
+        if source not in config.VALID_PROVIDERS:
+            raise HTTPException(400, "source は local / cloud / openai のいずれかです")
+        if not _provider_key_configured(source):
+            return {"source": source, "models": [], "unavailable": f"{source} のAPIキーが未設定です (.env)"}
+        return {"source": source, "models": providers.list_preset_models(source)}
+    # Ollama (local / cloud)
+    if source == "cloud" and not config.OLLAMA_API_KEY:
+        return {"source": source, "models": [], "unavailable": "APIキーが未設定です (.env)"}
     try:
-        models = await model_admin.list_models(mode)
+        models = await model_admin.list_models(source)
     except model_admin.OllamaUnavailable as e:
-        return {"mode": mode, "models": [], "unavailable": str(e)}
-    return {"mode": mode, "models": models}
+        return {"source": source, "models": [], "unavailable": str(e)}
+    return {"source": source, "models": models}
 
 
 @app.post("/api/models/pull")

@@ -32,15 +32,29 @@ MAX_AGENT_STEPS = int(_agent.get("max_steps", 15))
 MAX_HISTORY_MESSAGES = int(_agent.get("max_history_messages", 40))
 # LLMのストリーミング中、次のチャンクをこの秒数待っても届かなければ打ち切る
 LLM_IDLE_TIMEOUT = float(_agent.get("llm_idle_timeout", 180))
+# 1回のLLM応答“全体”の上限秒数。チャンクは届き続けるのに(推論を延々流し続ける等)
+# 可視出力もツール呼び出しも出ないまま止まる「無言ハング」を打ち切るための総タイムアウト。
+LLM_STEP_TIMEOUT = float(_agent.get("llm_step_timeout", 240))
+# 一時的なサーバーエラー(Ollama Cloudの500など)へのリトライ設定。
+# 500の波が数十秒続くことがあるため、回数を確保しつつ指数バックオフで待つ。
+LLM_MAX_ATTEMPTS = int(_agent.get("llm_max_attempts", 5))
+LLM_RETRY_BACKOFF_CAP = float(_agent.get("llm_retry_backoff_cap", 30))
 
 # --- 環境変数 (インフラ・シークレット。実行時変更しない) ---
 OLLAMA_API_KEY = os.environ.get("OLLAMA_API_KEY", "").strip()
 OLLAMA_CLOUD_URL = os.environ.get("OLLAMA_CLOUD_URL", "https://ollama.com")
 OLLAMA_LOCAL_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+# 鍵を持つユーザー向けの追加プロバイダー(任意)。Ollamaが主役・唯一のゼロ設定入口で、
+# ここは.envに鍵を入れた人だけのopt-in。鍵は.envのみで管理し、APIには出さない。
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 DEFAULT_LOCAL_MODEL = "qwen3.5:9b"
 DEFAULT_CLOUD_MODEL = "gpt-oss:120b"
+# DEFAULT_OPENAI_MODEL は OpenAIプリセット(config.toml)の先頭から後段で決める
 
+# provider: どのLLMプロバイダーを使うか。"ollama" は従来どおり mode(local/cloud)で
+# 実行場所を切り替える。"openai" 等の外部プロバイダーは mode を持たない(常にクラウド)。
+VALID_PROVIDERS = {"ollama", "openai"}
 VALID_MODES = {"local", "cloud"}
 # "auto"=パラメータを送らずモデル既定に任せる / true・false=思考のオンオフ(qwen3等)
 # low・medium・high=思考の深さ(gpt-oss等のレベル対応モデル)
@@ -52,29 +66,71 @@ _MODEL_NAME_RE = re.compile(
 )
 
 
+# APIキーは "sk-" で始まる(OpenAI等)。どのプロバイダーのモデル名としても正当でないため、
+# すべてのモデル名欄(local/cloud/openai)で弾き、秘密情報を settings.json に保存させない
+# (キーは.envのみで管理)。Ollamaモデル名は例: qwen3:8b なので "sk-" 始まりは有り得ない。
+_API_KEY_LIKE_RE = re.compile(r"^sk-", re.IGNORECASE)
+
+
 def validate_model_name(name: str) -> str:
     name = (name or "").strip()
+    if _API_KEY_LIKE_RE.match(name):
+        raise ValueError("APIキーのような値は入力できません。モデル名を入力してください。")
     if not name or len(name) > 128 or not _MODEL_NAME_RE.match(name):
         raise ValueError(f"モデル名の形式が正しくありません: {name[:64]}")
     return name
+
+
+# OpenAIプロバイダーで設定UIに出す推奨モデル候補(config.toml の llm.openai_models で編集可)。
+# モデルは順次廃止されるため、コードに埋め込まずデータで持つ。廃止時はconfig.tomlを直せばよい。
+_DEFAULT_OPENAI_PRESET = ("gpt-4o-mini",)
+
+
+def _load_openai_presets(raw) -> list[str]:
+    names: list[str] = []
+    for item in raw if isinstance(raw, list) else ():
+        try:
+            names.append(validate_model_name(str(item)))
+        except ValueError:
+            logger.warning("config.toml の openai_models に不正なモデル名: %s", str(item)[:64])
+    return names or list(_DEFAULT_OPENAI_PRESET)
+
+
+OPENAI_PRESET_MODELS = _load_openai_presets(_llm.get("openai_models"))
+# 既定のOpenAIモデルはプリセットの先頭(config.tomlで制御可能)
+DEFAULT_OPENAI_MODEL = OPENAI_PRESET_MODELS[0]
 
 
 @dataclass(frozen=True)
 class LLMSettings:
     """実行時に変更可能なLLM設定。設定UIまたはconfig.tomlから供給される。"""
 
-    mode: str            # "local" | "cloud"
-    model_local: str     # localモードで使うモデル
-    model_cloud: str     # cloudモードで使うモデル
+    provider: str        # "ollama" | "openai" (VALID_PROVIDERS)
+    mode: str            # ollama時のみ有効: "local" | "cloud"
+    model_local: str     # ollama localモードで使うモデル
+    model_cloud: str     # ollama cloudモードで使うモデル
+    model_openai: str    # openaiプロバイダーで使うモデル
     reasoning: str       # VALID_REASONING のいずれか
-    num_ctx: int         # localモードのみ有効 (config.tomlでのみ変更)
+    num_ctx: int         # ollama localモードのみ有効 (config.tomlでのみ変更)
+    # 設定UIで自由入力し保存したOpenAIモデル候補(settings.jsonに永続化)。プリセット
+    # (config.tomlのopenai_models)とは別で、こちらは削除可能。イミュータブルにtupleで保持。
+    openai_custom_models: tuple[str, ...] = ()
 
     @property
     def model(self) -> str:
+        """現在のプロバイダー/モードでの実効モデル名。"""
+        if self.provider == "openai":
+            return self.model_openai
         return self.model_cloud if self.mode == "cloud" else self.model_local
 
     @property
+    def is_cloud(self) -> bool:
+        """外部クラウド(ネット越し)を使うか。ヘッダー表示や鍵チェックの判定に使う。"""
+        return self.provider != "ollama" or self.mode == "cloud"
+
+    @property
     def base_url(self) -> str:
+        """Ollama用のベースURL(provider=='ollama'のときのみ意味を持つ)。"""
         return OLLAMA_CLOUD_URL if self.mode == "cloud" else OLLAMA_LOCAL_URL
 
     def headers(self) -> dict[str, str]:
@@ -86,6 +142,9 @@ class LLMSettings:
 
 def _load_initial_settings() -> LLMSettings:
     """config.toml を土台に、settings.json(UIからの変更)があれば上書きして読み込む。"""
+    provider = str(_llm.get("provider", "ollama")).lower()
+    if provider not in VALID_PROVIDERS:
+        provider = "ollama"
     mode = str(_llm.get("mode", "local")).lower()
     if mode not in VALID_MODES:
         mode = "local"
@@ -94,14 +153,17 @@ def _load_initial_settings() -> LLMSettings:
     if reasoning not in VALID_REASONING:
         reasoning = "auto"
 
-    # config.tomlのmodelは「そのmode用のモデル」として扱い、反対側は既定値で埋める
-    model_local = toml_model if mode == "local" and toml_model else DEFAULT_LOCAL_MODEL
-    model_cloud = toml_model if mode == "cloud" and toml_model else DEFAULT_CLOUD_MODEL
+    # config.tomlのmodelは「その(provider,mode)用のモデル」として扱い、他は既定値で埋める
+    model_local = toml_model if provider == "ollama" and mode == "local" and toml_model else DEFAULT_LOCAL_MODEL
+    model_cloud = toml_model if provider == "ollama" and mode == "cloud" and toml_model else DEFAULT_CLOUD_MODEL
+    model_openai = toml_model if provider == "openai" and toml_model else DEFAULT_OPENAI_MODEL
 
     settings = LLMSettings(
+        provider=provider,
         mode=mode,
         model_local=model_local,
         model_cloud=model_cloud,
+        model_openai=model_openai,
         reasoning=reasoning,
         num_ctx=int(_llm.get("num_ctx", 8192)),
     )
@@ -118,6 +180,11 @@ def _load_initial_settings() -> LLMSettings:
 
 def _apply_changes(settings: LLMSettings, changes: dict) -> LLMSettings:
     """検証しながら設定変更を適用する。不正な値は ValueError。"""
+    if "provider" in changes and changes["provider"] is not None:
+        provider = str(changes["provider"]).lower()
+        if provider not in VALID_PROVIDERS:
+            raise ValueError(f"provider は {' / '.join(sorted(VALID_PROVIDERS))} のいずれかです: {provider[:32]}")
+        settings = replace(settings, provider=provider)
     if "mode" in changes and changes["mode"] is not None:
         mode = str(changes["mode"]).lower()
         if mode not in VALID_MODES:
@@ -127,6 +194,18 @@ def _apply_changes(settings: LLMSettings, changes: dict) -> LLMSettings:
         settings = replace(settings, model_local=validate_model_name(str(changes["model_local"])))
     if "model_cloud" in changes and changes["model_cloud"] is not None:
         settings = replace(settings, model_cloud=validate_model_name(str(changes["model_cloud"])))
+    if "model_openai" in changes and changes["model_openai"] is not None:
+        settings = replace(settings, model_openai=validate_model_name(str(changes["model_openai"])))
+    if "openai_custom_models" in changes and changes["openai_custom_models"] is not None:
+        raw = changes["openai_custom_models"]
+        if not isinstance(raw, list):
+            raise ValueError("openai_custom_models はリスト形式で指定してください")
+        cleaned: list[str] = []
+        for item in raw:
+            name = validate_model_name(str(item))
+            if name not in cleaned:
+                cleaned.append(name)
+        settings = replace(settings, openai_custom_models=tuple(cleaned))
     if "reasoning" in changes and changes["reasoning"] is not None:
         reasoning = str(changes["reasoning"]).lower()
         if reasoning not in VALID_REASONING:
@@ -153,8 +232,8 @@ def update_settings(changes: dict) -> LLMSettings:
         _persist(new_settings)
         _settings = new_settings
         logger.info(
-            "設定を更新しました: mode=%s model=%s reasoning=%s",
-            new_settings.mode, new_settings.model, new_settings.reasoning,
+            "設定を更新しました: provider=%s mode=%s model=%s reasoning=%s",
+            new_settings.provider, new_settings.mode, new_settings.model, new_settings.reasoning,
         )
         return new_settings
 
@@ -163,9 +242,12 @@ def _persist(settings: LLMSettings) -> None:
     """一時ファイル+os.replaceでアトミックに保存(書きかけファイルを残さない)。"""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
+        "provider": settings.provider,
         "mode": settings.mode,
         "model_local": settings.model_local,
         "model_cloud": settings.model_cloud,
+        "model_openai": settings.model_openai,
+        "openai_custom_models": list(settings.openai_custom_models),
         "reasoning": settings.reasoning,
     }
     tmp = SETTINGS_PATH.with_suffix(".json.tmp")

@@ -51,8 +51,8 @@ def configure_logging() -> None:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         root.addHandler(handler)
 
-    # 全ハンドラにシークレット墨消しフィルタを付与
-    redactor = RedactSecretsFilter([config.OLLAMA_API_KEY])
+    # 全ハンドラにシークレット墨消しフィルタを付与(全プロバイダーの鍵を対象)
+    redactor = RedactSecretsFilter([config.OLLAMA_API_KEY, config.OPENAI_API_KEY])
     for h in root.handlers:
         h.addFilter(redactor)
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
@@ -60,6 +60,8 @@ def configure_logging() -> None:
         for h in lg.handlers:
             h.addFilter(redactor)
 
-    # 外部HTTPライブラリの詳細ログ(リクエストURL等)を抑制
-    for noisy in ("httpx", "httpcore"):
+    # 外部HTTPライブラリ/SDKの詳細ログ(リクエストURL・ヘッダー等)を抑制する。
+    # 万一漏れても上のRedactSecretsFilterが墨消しするが、そもそも出力させない多重防御。
+    # openai SDKはDEBUG時にAuthorizationヘッダーを含むリクエスト詳細を出しうるため必ず抑制する。
+    for noisy in ("httpx", "httpcore", "openai", "openai._base_client"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
