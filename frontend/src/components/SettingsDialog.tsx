@@ -10,19 +10,29 @@ const SUGGESTED: Record<ModelSource, string[]> = {
   openai: [],
 }
 
-// 上部の「AIプロバイダー/実行場所」カード。Ollamaは cloud/local の2枚、外部プロバイダーは1枚
-interface BackendCard {
-  key: 'ollama_cloud' | 'ollama_local' | 'openai'
+// 上段「AIの実行場所」= このパソコン(手元) / クラウド(ネット越しの高性能AI)の2択。
+// プロバイダーが何個増えてもこの2枚は固定で、増えるのは下段「利用するサービス」側。
+type Location = 'local' | 'cloud'
+const LOCATION_CARDS: { key: Location; title: string; desc: string }[] = [
+  { key: 'cloud', title: 'クラウド', desc: '高性能なAIをインターネット経由で利用' },
+  { key: 'local', title: 'このパソコン', desc: 'データを外部に送らず手元で実行' },
+]
+
+// 下段「利用するサービス」= クラウド選択時に縦リストで並ぶ。プロバイダー追加は原則ここに1行
+// 足すだけ(backend providers.py に _build_* を実装し provider を返す)。requiresKey を持つ
+// ものは、その鍵が .env にある(または現在選択中の)ときだけ表示する opt-in。縦リストなので
+// 何個増えてもレイアウトが崩れない。
+interface CloudService {
+  key: string
   provider: LLMProvider
-  mode: 'local' | 'cloud'
   source: ModelSource
   title: string
-  desc: string
+  requiresKey?: 'openai_key_configured' // 表示条件に使う settings のフラグ名
 }
-const BACKENDS: BackendCard[] = [
-  { key: 'ollama_cloud', provider: 'ollama', mode: 'cloud', source: 'cloud', title: 'Ollama クラウド', desc: '高性能なAIをインターネット経由で利用' },
-  { key: 'ollama_local', provider: 'ollama', mode: 'local', source: 'local', title: 'このパソコン', desc: 'データを外部に送らず手元で実行' },
-  { key: 'openai', provider: 'openai', mode: 'cloud', source: 'openai', title: 'OpenAI', desc: 'OpenAIのAIをAPIキーで利用' },
+const CLOUD_SERVICES: CloudService[] = [
+  { key: 'ollama-cloud', provider: 'ollama', source: 'cloud', title: 'Ollama Cloud' },
+  { key: 'openai', provider: 'openai', source: 'openai', title: 'OpenAI', requiresKey: 'openai_key_configured' },
+  // 追加例: { key: 'anthropic', provider: 'anthropic', source: 'anthropic', title: 'Anthropic (Claude)', requiresKey: 'anthropic_key_configured' },
 ]
 
 // gpt-oss系は思考の深さ(low/medium/high)指定、それ以外のOllamaはオン/オフ指定
@@ -140,12 +150,32 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
     }
   }, [showReasoning, reasoningOptions, reasoning])
 
-  // OpenAIカードは、鍵が設定済み or 現在選択中のときだけ表示する(未設定なら一覧をすっきりさせる)
-  const visibleBackends = BACKENDS.filter(
-    (b) => b.provider !== 'openai' || settings?.openai_key_configured || provider === 'openai',
-  )
-  const selectedKey = provider === 'openai' ? 'openai' : `ollama_${mode}`
+  // 上段(場所)と下段(サービス)の選択状態を provider/mode から導出する
+  const location: Location = provider === 'ollama' && mode === 'local' ? 'local' : 'cloud'
+  const cloudKey = provider === 'ollama' ? 'ollama-cloud' : provider // openai → 'openai'(将来 anthropic 等も provider 名がキー)
+  // 鍵未設定のサービスは隠す(現在選択中は残す)。Ollama Cloud は鍵不要扱いで常に表示
+  const visibleCloudServices = CLOUD_SERVICES.filter((s) => {
+    if (cloudKey === s.key) return true
+    if (!s.requiresKey) return true
+    return Boolean(settings?.[s.requiresKey])
+  })
   const keyConfigured = provider === 'openai' ? settings?.openai_key_configured : settings?.cloud_key_configured
+
+  // 下段のサービスを選ぶ(Ollamaはcloud、OpenAI等もcloud固定で統一)
+  const selectCloudService = (svc: CloudService) => {
+    setProvider(svc.provider)
+    setMode('cloud')
+  }
+  // 上段の場所を選ぶ。クラウドへ切替時は、表示中の先頭サービス(通常 Ollama Cloud)を既定に
+  const selectLocation = (loc: Location) => {
+    if (loc === 'local') {
+      setProvider('ollama')
+      setMode('local')
+    } else if (location !== 'cloud') {
+      const first = visibleCloudServices[0]
+      if (first) selectCloudService(first)
+    }
+  }
 
   // OpenAIはプリセット(config.toml由来)＋自由入力の追加分(削除可能)を並べる。
   // 現行OpenAIのチャットモデルはすべて画像対応なので追加分は vision=true 扱い。
@@ -308,21 +338,42 @@ export function SettingsDialog({ onClose, onSaved }: Props) {
             <section className="settings-section">
               <h3>AIの実行場所</h3>
               <div className="mode-cards">
-                {visibleBackends.map((b) => (
+                {LOCATION_CARDS.map((c) => (
                   <button
-                    key={b.key}
-                    className={`mode-card ${selectedKey === b.key ? 'selected' : ''}`}
-                    onClick={() => {
-                      setProvider(b.provider)
-                      setMode(b.mode)
-                    }}
+                    key={c.key}
+                    className={`mode-card ${location === c.key ? 'selected' : ''}`}
+                    onClick={() => selectLocation(c.key)}
                   >
-                    <span className="mode-card-title">{b.title}</span>
-                    <span className="mode-card-desc">{b.desc}</span>
+                    <span className="mode-card-title">{c.title}</span>
+                    <span className="mode-card-desc">{c.desc}</span>
                   </button>
                 ))}
               </div>
-              {source !== 'local' && !keyConfigured && (
+
+              {/* クラウド選択時のみ、利用するサービスを縦リストで選ぶ(プロバイダーが増えても崩れない) */}
+              {location === 'cloud' && (
+                <div className="cloud-services">
+                  <p className="settings-sublabel">利用するサービス</p>
+                  <div className="model-list">
+                    {visibleCloudServices.map((svc) => (
+                      <label
+                        key={svc.key}
+                        className={`model-row ${cloudKey === svc.key ? 'selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="cloud-service"
+                          checked={cloudKey === svc.key}
+                          onChange={() => selectCloudService(svc)}
+                        />
+                        <span className="model-name">{svc.title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {location === 'cloud' && !keyConfigured && (
                 <p className="settings-warning">
                   {provider === 'openai' ? (
                     <>
