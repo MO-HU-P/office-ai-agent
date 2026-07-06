@@ -56,23 +56,32 @@ export type PreviewData =
   | { type: 'csv'; content: string }
   | { type: 'unsupported' }
 
+export type LLMProvider = 'ollama' | 'openai'
+export type LLMMode = 'local' | 'cloud'
+// モデル一覧の取得元。Ollamaは local/cloud、外部プロバイダーはその名前
+export type ModelSource = 'local' | 'cloud' | 'openai'
+
 export interface HealthInfo {
-  mode: 'local' | 'cloud'
-  ollama: boolean
+  provider: LLMProvider
+  mode: LLMMode
+  backend_ok: boolean
   key_missing: boolean
   model: string
   model_ready: boolean
 }
 
-export type LLMMode = 'local' | 'cloud'
-
 export interface SettingsInfo {
+  provider: LLMProvider
   mode: LLMMode
   model: string
   model_local: string
   model_cloud: string
+  model_openai: string
+  // 設定画面で自由入力し保存したOpenAIモデル候補(settings.json)。プリセットとは別で削除可能
+  openai_custom_models: string[]
   reasoning: string
   cloud_key_configured: boolean
+  openai_key_configured: boolean
 }
 
 export interface ModelInfo {
@@ -82,7 +91,7 @@ export interface ModelInfo {
 }
 
 export interface ModelListResult {
-  mode: LLMMode
+  source: ModelSource
   models: ModelInfo[]
   unavailable?: string
 }

@@ -104,16 +104,18 @@ export default function App() {
         </div>
         <div className="header-right">
           <div className="header-status">
-            <span className={`status-dot ${health?.ollama ? (health.model_ready ? 'on' : 'warn') : 'off'}`} />
+            <span className={`status-dot ${health?.backend_ok ? (health.model_ready ? 'on' : 'warn') : 'off'}`} />
             {health?.key_missing
-              ? 'OLLAMA_API_KEY が未設定です (.env)'
-              : health?.ollama
-                ? health.model_ready
-                  ? `${health.mode === 'cloud' ? 'Ollama Cloud' : 'Ollama'} · ${health.model}`
-                  : health.mode === 'cloud'
-                    ? `モデル ${health.model} は利用できません`
-                    : `モデル ${health.model} をダウンロード中…`
-                : 'Ollama 未接続'}
+              ? `${health.provider === 'openai' ? 'OPENAI_API_KEY' : 'OLLAMA_API_KEY'} が未設定です (.env)`
+              : health?.provider === 'openai'
+                ? `OpenAI · ${health.model}`
+                : health?.backend_ok
+                  ? health.model_ready
+                    ? `${health.mode === 'cloud' ? 'Ollama Cloud' : 'Ollama'} · ${health.model}`
+                    : health.mode === 'cloud'
+                      ? `モデル ${health.model} は利用できません`
+                      : `モデル ${health.model} をダウンロード中…`
+                  : 'Ollama 未接続'}
           </div>
           <button
             className="icon-btn"
@@ -137,10 +139,10 @@ export default function App() {
           connected={connected}
           statusWarning={
             health?.key_missing
-              ? '.env に OLLAMA_API_KEY を設定して docker compose up -d を再実行してください。'
-              : health && !health.model_ready
+              ? `.env に ${health.provider === 'openai' ? 'OPENAI_API_KEY' : 'OLLAMA_API_KEY'} を設定して docker compose up -d を再実行してください。`
+              : health && !health.model_ready && health.provider === 'ollama'
                 ? health.mode === 'cloud'
-                  ? health.ollama
+                  ? health.backend_ok
                     ? `選択中のAIモデル「${health.model}」は Ollama Cloud で見つかりません。提供終了した可能性があります。右上の設定（歯車アイコン）から別のモデルを選んでください。`
                     : 'Ollama Cloud に接続できていません。APIキーとネットワークを確認してください。'
                   : `モデル ${health.model} をダウンロード中です。初回は数分かかります。`

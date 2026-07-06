@@ -1,8 +1,8 @@
 import type {
   FileInfo,
   HealthInfo,
-  LLMMode,
   ModelListResult,
+  ModelSource,
   PreviewData,
   PullProgress,
   SettingsInfo,
@@ -72,8 +72,8 @@ export async function updateSettings(patch: Partial<SettingsInfo>): Promise<Sett
   return res.json()
 }
 
-export async function fetchModels(mode: LLMMode): Promise<ModelListResult> {
-  const res = await fetch(`/api/models?mode=${mode}`)
+export async function fetchModels(source: ModelSource): Promise<ModelListResult> {
+  const res = await fetch(`/api/models?source=${source}`)
   if (!res.ok) throw new Error('モデル一覧の取得に失敗しました')
   return res.json()
 }
