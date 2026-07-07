@@ -307,6 +307,10 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 他のDockerプロジェクトと同時に動かしても衝突しないよう、プロジェクト名を `office-ai-agent` に固定し、外部に公開するのはポート 3000 のみにしています。GPUがないパソコンでローカルモデルを使う場合は、`docker-compose.yml` の `gpus: all` の行を削除してください。
 
+# 商標について
+
+本アプリは Microsoft Corporation と提携・関連しておらず、同社による承認・後援も受けていません。Microsoft、Office、Word、Excel、PowerPoint は Microsoft Corporation の商標です。本アプリでのこれらの名称の使用は、対応するファイル形式を示すための説明的な表示です。
+
 # ライセンス
 
 このプロジェクトは [Apache License 2.0](LICENSE) で公開しています。著作権表示とライセンス文を保持すれば、商用を含め自由に利用・改変・再配布できます。

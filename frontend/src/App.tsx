@@ -98,11 +98,16 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-title">
-          <svg viewBox="0 0 24 24" width="26" height="26">
-            <rect x="3" y="3" width="8" height="8" rx="1.5" fill="#4285f4" />
-            <rect x="13" y="3" width="8" height="8" rx="1.5" fill="#ea4335" />
-            <rect x="3" y="13" width="8" height="8" rx="1.5" fill="#34a853" />
-            <rect x="13" y="13" width="8" height="8" rx="1.5" fill="#fbbc04" />
+          {/* 書類とAIのきらめきを表すヘッダーマーク */}
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+            <rect x="4" y="2.5" width="13" height="19" rx="2.5" fill="#1a73e8" />
+            <rect x="7" y="6.5" width="7" height="1.6" rx="0.8" fill="#fff" />
+            <rect x="7" y="10" width="7" height="1.6" rx="0.8" fill="#fff" />
+            <rect x="7" y="13.5" width="4.5" height="1.6" rx="0.8" fill="#fff" />
+            <path
+              d="M18 13c.35 1.85 1.05 2.55 2.9 2.9-1.85.35-2.55 1.05-2.9 2.9-.35-1.85-1.05-2.55-2.9-2.9 1.85-.35 2.55-1.05 2.9-2.9Z"
+              fill="#f9ab00"
+            />
           </svg>
           <h1>Office AI Agent</h1>
         </div>

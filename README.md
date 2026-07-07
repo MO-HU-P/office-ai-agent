@@ -72,6 +72,10 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 - **Big requests work best step by step** (create the table → add the analysis → write the report). If a cloud call fails or stalls mid-run, generated files are kept — just ask the agent to continue. Transient server errors (e.g. HTTP 500) are retried with exponential backoff, and stalled/silent LLM streams are cut off by both an idle and a total-response timeout, then retried (all tunable in `config.toml`: `agent.max_steps`, `llm_idle_timeout`, `llm_step_timeout`, `llm_max_attempts`, `llm_retry_backoff_cap`). For long multi-step runs a hosted provider (Ollama Cloud, OpenAI, or Google Gemini) is more reliable than free-tier capacity — switch providers in the settings if one is flaky.
 - No GPU? Remove the `gpus: all` line in `docker-compose.yml` (local mode will run on CPU).
 
+## Trademarks
+
+This project is not affiliated with, endorsed by, or sponsored by Microsoft Corporation. Microsoft, Office, Word, Excel, and PowerPoint are trademarks of Microsoft Corporation. Any use of these names here is purely descriptive, to indicate the file formats the app works with.
+
 ## License
 
 [Apache License 2.0](LICENSE)
