@@ -12,7 +12,10 @@ workspace/*
 # 実行時に生成される個人設定・一時ファイル
 data/
 .playwright-mcp/
-.claude/settings.local.json
+
+# Claude Code のローカル設定・ガイド（公開しない。手元でのみ使用）
+CLAUDE.md
+.claude/
 
 # APIキー等のシークレットを含むため、実ファイルはコミットしない
 # (見本の .env.example は共有するので除外しない)
