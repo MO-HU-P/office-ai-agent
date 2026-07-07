@@ -1,0 +1,13 @@
+# テキストファイルは自動判定し、リポジトリ内では常にLFで保存・チェックアウトする。
+# (WSL/Linuxで開発しつつ Windows 側 /mnt/c にファイルがあるため、CRLF混入を防ぐ)
+* text=auto eol=lf
+
+# バイナリは変換しない
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
