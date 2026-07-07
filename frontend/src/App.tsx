@@ -154,6 +154,7 @@ export default function App() {
           }
           modelName={health?.model ?? '…'}
           width={chatWidth}
+          activeFile={activeFile}
           onSend={sendMessage}
           onReset={resetChat}
         />

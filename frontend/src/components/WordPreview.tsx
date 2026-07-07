@@ -28,6 +28,8 @@ export function WordPreview({ filename, refreshKey }: { filename: string; refres
           ignoreWidth: false,
           ignoreHeight: true,
           experimental: true,
+          renderChanges: true,   // 変更履歴(見え消し)を赤字で表示
+          renderComments: true,  // レビューコメント(吹き出し)を表示
         }).then(() => fitZoom())
       })
       .catch((e) => {

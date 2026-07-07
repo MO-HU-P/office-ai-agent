@@ -39,12 +39,24 @@ const TOOL_LABELS: Record<string, string> = {
   render_page: '見た目の確認',
   merge_template: 'テンプレート差し込み',
   check_document_issues: '文書チェック',
+  doc_diff: 'ファイルの比較',
+  word_suggest_edits: '変更履歴で提案',
+  word_add_comments: 'コメント追加',
+  anonymize_file: '個人情報のマスク',
 }
 
 const SUGGESTIONS = [
   '月別売上のサンプルExcelを作って、合計行と書式も設定して',
   '「生成AIの業務活用」について5枚構成のプレゼン資料を作って',
   '会議の議事録テンプレートをWordで作って',
+]
+
+// 表示中のファイルに対して1クリックで実行できる校閲プリセット。
+// promptは対象ファイル名を差し込んだ指示文で、押すとそのままチャットに送る。
+const PRESETS: { label: string; icon: string; prompt: (file: string) => string }[] = [
+  { label: '校正', icon: '✍️', prompt: (f) => `「${f}」の誤字脱字・文法の誤り・不自然な言い回しを校正して、直した箇所を教えてください。` },
+  { label: '要約', icon: '📝', prompt: (f) => `「${f}」の内容を、要点がわかるように日本語で要約してください。` },
+  { label: '匿名化', icon: '🕶️', prompt: (f) => `「${f}」に含まれる個人情報を、元のファイルは残したまま匿名化してください。` },
 ]
 
 function ToolChip({ part }: { part: ToolCallPart }) {
@@ -100,11 +112,12 @@ interface ChatProps {
   statusWarning: string | null
   modelName: string
   width: number
+  activeFile: string | null
   onSend: (text: string) => void
   onReset: () => void
 }
 
-export function Chat({ messages, busy, connected, statusWarning, modelName, width, onSend, onReset }: ChatProps) {
+export function Chat({ messages, busy, connected, statusWarning, modelName, width, activeFile, onSend, onReset }: ChatProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -172,6 +185,20 @@ export function Chat({ messages, busy, connected, statusWarning, modelName, widt
         )}
       </div>
       <div className="chat-input-area">
+        {activeFile && (
+          <div className="quick-presets" title={`表示中の「${activeFile}」に対して実行します`}>
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                className="preset-chip"
+                disabled={busy || !connected}
+                onClick={() => onSend(p.prompt(activeFile))}
+              >
+                <span aria-hidden>{p.icon}</span> {p.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="chat-input-box">
           <textarea
             ref={textareaRef}
