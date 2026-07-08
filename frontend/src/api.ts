@@ -1,4 +1,5 @@
 import type {
+  ChangesResult,
   FileInfo,
   HealthInfo,
   ModelListResult,
@@ -39,6 +40,29 @@ export async function uploadFile(file: File): Promise<void> {
 export async function deleteFile(name: string): Promise<void> {
   const res = await fetch(`/api/files/${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('削除に失敗しました')
+}
+
+/** 「最後の変更でどこが変わったか」の差分を取得する。 */
+export async function fetchChanges(name: string): Promise<ChangesResult> {
+  const res = await fetch(`/api/files/${encodeURIComponent(name)}/changes`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail ?? `変更箇所の取得に失敗しました (${res.status})`)
+  }
+  return res.json()
+}
+
+/** ファイルを自動バックアップの状態に巻き戻す(version省略時は最後の変更前)。 */
+export async function restoreFile(name: string, version?: string): Promise<void> {
+  const res = await fetch(`/api/files/${encodeURIComponent(name)}/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(version ? { version } : {}),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail ?? '巻き戻しに失敗しました')
+  }
 }
 
 export async function fetchHealth(): Promise<HealthInfo> {

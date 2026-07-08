@@ -9,6 +9,7 @@ from pathlib import Path
 from langchain_core.tools import tool
 
 from ...config import WORKSPACE_DIR, resolve_workspace_path
+from ...services import history
 
 # グラフ描画の既定設定(ヘッドレス動作 + 日本語フォント)。LLMがコード内で設定しなくても効く
 MATPLOTLIBRC = Path(__file__).with_name("matplotlibrc")
@@ -54,10 +55,12 @@ def rename_file(old_name: str, new_name: str) -> str:
 
 @tool
 def delete_file(filename: str) -> str:
-    """ワークスペース内のファイルを削除する。ユーザーから明示的に削除を依頼された場合のみ使うこと。"""
+    """ワークスペース内のファイルを削除する。ユーザーから明示的に削除を依頼された場合のみ使うこと。
+    削除直前の状態は自動バックアップされるため、誤削除は restore_file で復元できる。"""
     path = resolve_workspace_path(filename, must_exist=True)
+    history.record_before_change(path)
     path.unlink()
-    return f"{filename} を削除しました"
+    return f"{filename} を削除しました(誤りだった場合は restore_file で復元できます)"
 
 
 @tool

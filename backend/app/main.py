@@ -16,7 +16,7 @@ from .agent import providers
 from .agent.loop import run_agent
 from .atomic import atomic_save
 from .log_setup import configure_logging
-from .services import model_admin
+from .services import changes, history, model_admin
 from .services.preview import excel_preview, pptx_preview
 
 configure_logging()
@@ -262,9 +262,13 @@ async def list_files():
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile):
     name = Path(file.filename or "upload").name
-    dest = config.resolve_workspace_path(name)
+    try:
+        dest = config.resolve_workspace_path(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     content = await file.read()
-    # 書き込み途中で失敗しても壊れたファイルが残らないようにする
+    # 書き込み途中で失敗しても壊れたファイルが残らないようにする。
+    # 既存ファイルへの上書きアップロードは、atomic_save内で編集前の状態が自動バックアップされる
     atomic_save(lambda p: Path(p).write_bytes(content), dest)
     return {"name": name, "size": len(content)}
 
@@ -299,8 +303,34 @@ async def get_preview(filename: str):
 @app.delete("/api/files/{filename}")
 async def delete_file(filename: str):
     path = _existing(filename)
+    # 誤削除に備えて削除直前の状態を自動バックアップする(復元は restore API / restore_file)
+    history.record_before_change(path)
     path.unlink()
     return {"deleted": filename}
+
+
+@app.get("/api/files/{filename}/changes")
+async def get_changes(filename: str):
+    """「最後の変更(AIの依頼1回分など)でどこが変わったか」の差分を返す。"""
+    _existing(filename)
+    return await asyncio.to_thread(changes.build_changes, filename)
+
+
+class RestoreRequest(BaseModel):
+    version: str | None = None
+
+
+@app.post("/api/files/{filename}/restore")
+async def restore_file_api(filename: str, req: RestoreRequest | None = None):
+    """ファイルを自動バックアップの状態に巻き戻す(version省略時は最後の変更前)。"""
+    try:
+        used = await asyncio.to_thread(history.restore, filename, (req.version if req else None))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    logger.info("APIから巻き戻し: %s ← %s", filename, used.id)
+    return {"restored": filename, "version": used.id, "time": used.timestamp.isoformat()}
 
 
 @app.get("/api/preview_cache/{cache_name}/{image_name}")
@@ -352,6 +382,8 @@ async def websocket_endpoint(ws: WebSocket):
             for t in (agent_task, watch_task):
                 if not t.done():
                     t.cancel()
+            # 実行終了後(中断含む)のUI操作によるバックアップがターン扱いにならないよう戻す
+            history.end_turn()
 
     global _chat_history
     try:

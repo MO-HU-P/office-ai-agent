@@ -43,6 +43,8 @@ const TOOL_LABELS: Record<string, string> = {
   word_suggest_edits: '変更履歴で提案',
   word_add_comments: 'コメント追加',
   anonymize_file: '個人情報のマスク',
+  list_file_versions: 'バックアップ一覧',
+  restore_file: '編集の巻き戻し',
 }
 
 const SUGGESTIONS = [

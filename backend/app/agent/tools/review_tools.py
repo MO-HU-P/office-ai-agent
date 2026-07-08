@@ -3,68 +3,19 @@ import copy
 import difflib
 import itertools
 from datetime import datetime, timezone
-from pathlib import Path
 
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from langchain_core.tools import tool
-from openpyxl import load_workbook
-from pptx import Presentation
 
 from ...atomic import atomic_save
 from ...config import resolve_workspace_path
+from ...services.textextract import EXTRACTORS
 
 # 差分出力が長くなりすぎないよう、返す行数・文字数に上限を設ける
 _MAX_DIFF_LINES = 200
 _MAX_DIFF_CHARS = 4000
-
-
-def _docx_lines(path: str) -> list[str]:
-    doc = Document(path)
-    lines = [p.text for p in doc.paragraphs]
-    for ti, table in enumerate(doc.tables):
-        lines.append(f"[表{ti}]")
-        for row in table.rows:
-            lines.append(" | ".join(c.text for c in row.cells))
-    return lines
-
-
-def _xlsx_lines(path: str) -> list[str]:
-    wb = load_workbook(path, read_only=True)
-    lines: list[str] = []
-    for ws in wb.worksheets:
-        lines.append(f"=== シート: {ws.title} ===")
-        for row in ws.iter_rows(values_only=True):
-            cells = ["" if v is None else str(v) for v in row]
-            lines.append(" | ".join(cells).rstrip(" |"))
-    wb.close()
-    return lines
-
-
-def _pptx_lines(path: str) -> list[str]:
-    prs = Presentation(path)
-    lines: list[str] = []
-    for si, slide in enumerate(prs.slides, 1):
-        lines.append(f"=== スライド{si} ===")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    lines.append("".join(run.text for run in para.runs))
-    return lines
-
-
-def _text_lines(path: str) -> list[str]:
-    return Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
-
-
-_EXTRACTORS = {
-    ".docx": _docx_lines,
-    ".xlsx": _xlsx_lines,
-    ".pptx": _pptx_lines,
-    ".csv": _text_lines,
-    ".txt": _text_lines,
-}
 
 
 @tool
@@ -80,7 +31,7 @@ def doc_diff(file_a: str, file_b: str) -> str:
     suffix = path_a.suffix.lower()
     if path_b.suffix.lower() != suffix:
         return "エラー: 同じ形式のファイル同士を指定してください(例: .docx と .docx)"
-    extractor = _EXTRACTORS.get(suffix)
+    extractor = EXTRACTORS.get(suffix)
     if extractor is None:
         return f"エラー: {suffix} は比較に対応していません(.docx / .xlsx / .pptx / .csv / .txt)"
 

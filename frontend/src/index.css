@@ -450,3 +450,22 @@ button { font-family: inherit; cursor: pointer; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #dadce0; border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: #bdc1c6; background-clip: content-box; border: 2px solid transparent; }
+
+/* ---------- Changes modal (変更箇所の確認・巻き戻し) ---------- */
+.changes-dialog { max-width: 640px; }
+.changes-body { padding-bottom: 12px; }
+.changes-empty { color: var(--text-2); font-size: 13px; line-height: 1.7; padding: 16px 0 8px; }
+.changes-meta { color: var(--text-2); font-size: 12.5px; line-height: 1.7; margin-bottom: 10px; }
+.diff-count { font-weight: 600; }
+.diff-count.add { color: #137333; }
+.diff-count.del { color: #c5221f; }
+.diff-lines {
+  border: 1px solid var(--border); border-radius: 8px; overflow: auto;
+  max-height: 48vh; font-family: 'Roboto Mono', monospace; font-size: 12px; line-height: 1.7;
+}
+.diff-line { white-space: pre-wrap; word-break: break-all; padding: 1px 10px 1px 6px; display: flex; gap: 6px; }
+.diff-line .diff-sign { flex: none; width: 1.2em; text-align: center; user-select: none; }
+.diff-line.add { background: #e6f4ea; color: #0d652d; }
+.diff-line.del { background: #fce8e6; color: #a50e0e; }
+.diff-line.ctx { color: var(--text-2); }
+.diff-line.skip { color: var(--text-2); justify-content: center; background: var(--surface); }

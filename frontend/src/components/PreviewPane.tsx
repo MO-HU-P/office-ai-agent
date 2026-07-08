@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { deleteFile, downloadUrl, fetchPreview, uploadFile } from '../api'
 import type { FileInfo, PreviewData } from '../types'
+import { ChangesModal } from './ChangesModal'
 import { ExcelPreview } from './ExcelPreview'
 import { PptPreview } from './PptPreview'
 import { WordPreview } from './WordPreview'
@@ -19,12 +20,15 @@ interface PreviewPaneProps {
   refreshKey: number
   onSelect: (name: string | null) => void
   onFilesChanged: () => void
+  /** 巻き戻し・上書きアップロードでファイルの中身が変わったとき(一覧とプレビューの再読み込み用) */
+  onFileChanged: (name: string) => void
 }
 
-export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesChanged }: PreviewPaneProps) {
+export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesChanged, onFileChanged }: PreviewPaneProps) {
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [changesOpen, setChangesOpen] = useState(false)
   const uploadRef = useRef<HTMLInputElement>(null)
 
   const active = files.find((f) => f.name === activeFile) ?? null
@@ -55,7 +59,9 @@ export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesCh
   const handleUpload = async (fileList: FileList | null) => {
     if (!fileList?.length) return
     for (const f of Array.from(fileList)) {
-      await uploadFile(f).catch((e) => alert(e.message))
+      // 同名ファイルへの上書きアップロードでもプレビューが新しい中身に更新されるよう、
+      // アップロード成功ごとに「中身が変わった」通知を出す(ファイルも自動で開かれる)
+      await uploadFile(f).then(() => onFileChanged(f.name)).catch((e) => alert(e.message))
     }
     onFilesChanged()
   }
@@ -105,6 +111,9 @@ export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesCh
           </button>
           {active && (
             <>
+              <button title="変更箇所を確認・元に戻す" onClick={() => setChangesOpen(true)}>
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+              </button>
               <a title="ダウンロード" href={downloadUrl(active.name)} download>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7zM5 18v2h14v-2z"/></svg>
               </a>
@@ -115,6 +124,13 @@ export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesCh
           )}
         </div>
       </div>
+      {changesOpen && activeFile && (
+        <ChangesModal
+          filename={activeFile}
+          onClose={() => setChangesOpen(false)}
+          onRestored={onFileChanged}
+        />
+      )}
       <div className="preview-body">
         {!activeFile && (
           <div className="preview-empty">

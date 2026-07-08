@@ -278,6 +278,10 @@ def resolve_workspace_path(filename: str, must_exist: bool = False) -> Path:
     # 文字列の前方一致では /workspace2 のような「名前が同じで始まる別ディレクトリ」を通してしまう
     if path != WORKSPACE_DIR and not path.is_relative_to(WORKSPACE_DIR):
         raise ValueError(f"ワークスペース外のパスは指定できません: {filename}")
+    # 先頭が「.」の隠し領域(自動バックアップの .history や保存中の一時ファイル)は
+    # ツール・APIから読み書き・削除できないようにする
+    if path != WORKSPACE_DIR and any(part.startswith(".") for part in path.relative_to(WORKSPACE_DIR).parts):
+        raise ValueError(f"先頭が「.」のファイル・フォルダは指定できません: {filename}")
     if must_exist and not path.exists():
         raise FileNotFoundError(f"ファイルが見つかりません: {filename}")
     return path

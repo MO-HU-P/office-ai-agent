@@ -56,6 +56,26 @@ export type PreviewData =
   | { type: 'csv'; content: string }
   | { type: 'unsupported' }
 
+// 「最後の変更でどこが変わったか」(GET /api/files/{name}/changes)
+export interface ChangeLine {
+  op: 'add' | 'del' | 'ctx' | 'skip'
+  text: string
+}
+
+export type ChangesResult =
+  | { available: false; reason: string }
+  | {
+      available: true
+      filename: string
+      base_version: string
+      base_time: string
+      base_label: string
+      added: number
+      removed: number
+      truncated: boolean
+      lines: ChangeLine[]
+    }
+
 export type LLMProvider = 'ollama' | 'openai' | 'gemini'
 export type LLMMode = 'local' | 'cloud'
 // モデル一覧の取得元。Ollamaは local/cloud、外部プロバイダーはその名前

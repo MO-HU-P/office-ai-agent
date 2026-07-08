@@ -4,11 +4,17 @@
 一時ファイル(先頭ドットで隠しファイル扱い)へ書き込み、成功したら os.replace で
 本来のパスへ差し替える。os.replace は同一ファイルシステム内ではアトミックに動作するため、
 「途中まで書けた壊れたファイル」が本来のパスに残ることがない。
+
+さらに、既存ファイルを上書きする場合は差し替え直前に services.history へ
+「編集前の状態」を自動バックアップする。全ツール・アップロードがここを通るため、
+この1箇所のフックで「差分確認」「巻き戻し」が全操作に効く。
 """
 import os
 import uuid
 from pathlib import Path
 from typing import Callable
+
+from .services import history
 
 
 def atomic_save(save_to: Callable[[str], None], final_path) -> None:
@@ -22,6 +28,8 @@ def atomic_save(save_to: Callable[[str], None], final_path) -> None:
     tmp = final.with_name(f".{final.name}.{uuid.uuid4().hex}.tmp")
     try:
         save_to(str(tmp))
+        if final.exists():
+            history.record_before_change(final)
         os.replace(str(tmp), str(final))
     finally:
         if tmp.exists():

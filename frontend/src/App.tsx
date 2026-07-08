@@ -176,6 +176,7 @@ export default function App() {
           refreshKey={refreshKey}
           onSelect={setActiveFile}
           onFilesChanged={reloadFiles}
+          onFileChanged={handleDocUpdated}
         />
       </main>
     </div>
