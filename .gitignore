@@ -5,6 +5,8 @@ dist/
 __pycache__/
 *.pyc
 .venv/
+# pytestの実行時キャッシュ(前回結果の記録。毎回再生成される)
+.pytest_cache/
 workspace/*
 !workspace/.gitkeep
 .DS_Store
