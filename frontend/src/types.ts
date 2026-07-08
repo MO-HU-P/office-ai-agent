@@ -56,6 +56,13 @@ export type PreviewData =
   | { type: 'csv'; content: string }
   | { type: 'unsupported' }
 
+// プレビュー上でマウス選択した「対象箇所」。次のチャットメッセージの冒頭に差し込まれる
+export interface TargetSelection {
+  file: string
+  /** 例: シート「Sheet1」のセル B2:D5 / スライド3 / 「…」と書かれている箇所 */
+  label: string
+}
+
 // 「最後の変更でどこが変わったか」(GET /api/files/{name}/changes)
 export interface ChangeLine {
   op: 'add' | 'del' | 'ctx' | 'skip'

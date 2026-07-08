@@ -4,7 +4,7 @@ import { Chat } from './components/Chat'
 import { PreviewPane } from './components/PreviewPane'
 import { SettingsDialog } from './components/SettingsDialog'
 import { useAgentSocket } from './hooks/useAgentSocket'
-import type { FileInfo, HealthInfo } from './types'
+import type { FileInfo, HealthInfo, TargetSelection } from './types'
 
 // 外部プロバイダーのヘッダー表示名と、キー未設定時に案内する .env の変数名
 const PROVIDER_TITLES: Record<string, string> = { openai: 'OpenAI', gemini: 'Gemini' }
@@ -18,6 +18,25 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const activeFileRef = useRef(activeFile)
   activeFileRef.current = activeFile
+
+  // プレビュー上でマウス選択した「対象箇所」。epochはプレビュー側の選択ハイライトを
+  // リセットするための合図(解除のたびに増える)
+  const [targetSel, setTargetSel] = useState<TargetSelection | null>(null)
+  const [targetEpoch, setTargetEpoch] = useState(0)
+
+  const handleTarget = useCallback((label: string | null) => {
+    setTargetSel(label && activeFileRef.current ? { file: activeFileRef.current, label } : null)
+  }, [])
+
+  const clearTarget = useCallback(() => {
+    setTargetSel(null)
+    setTargetEpoch((e) => e + 1)
+  }, [])
+
+  // 別のファイルを開いたら選択は意味を失うので解除する
+  useEffect(() => {
+    clearTarget()
+  }, [activeFile, clearTarget])
 
   // 左右ペインの境界をドラッグして幅を変える
   const CHAT_MIN = 320
@@ -160,6 +179,8 @@ export default function App() {
           modelName={health?.model ?? '…'}
           width={chatWidth}
           activeFile={activeFile}
+          target={targetSel}
+          onClearTarget={clearTarget}
           onSend={sendMessage}
           onReset={resetChat}
         />
@@ -177,6 +198,8 @@ export default function App() {
           onSelect={setActiveFile}
           onFilesChanged={reloadFiles}
           onFileChanged={handleDocUpdated}
+          targetEpoch={targetEpoch}
+          onTarget={handleTarget}
         />
       </main>
     </div>

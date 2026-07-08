@@ -22,9 +22,13 @@ interface PreviewPaneProps {
   onFilesChanged: () => void
   /** 巻き戻し・上書きアップロードでファイルの中身が変わったとき(一覧とプレビューの再読み込み用) */
   onFileChanged: (name: string) => void
+  /** 「対象箇所」の選択解除の合図(増えるたびにプレビュー側のハイライトを消す) */
+  targetEpoch: number
+  /** プレビュー上でマウス選択した対象箇所の通知(nullで解除) */
+  onTarget: (label: string | null) => void
 }
 
-export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesChanged, onFileChanged }: PreviewPaneProps) {
+export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesChanged, onFileChanged, targetEpoch, onTarget }: PreviewPaneProps) {
   const [preview, setPreview] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -142,9 +146,15 @@ export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesCh
         )}
         {activeFile && loading && !preview && <div className="preview-message"><span className="spinner dark" /> 読み込み中…</div>}
         {activeFile && error && <div className="preview-message error">{error}</div>}
-        {activeFile && !error && preview?.type === 'excel' && <ExcelPreview sheets={preview.sheets} />}
-        {activeFile && !error && preview?.type === 'pptx' && <PptPreview slides={preview.slides} />}
-        {activeFile && !error && preview?.type === 'docx' && <WordPreview filename={activeFile} refreshKey={refreshKey} />}
+        {activeFile && !error && preview?.type === 'excel' && (
+          <ExcelPreview sheets={preview.sheets} targetEpoch={targetEpoch} onTarget={onTarget} />
+        )}
+        {activeFile && !error && preview?.type === 'pptx' && (
+          <PptPreview slides={preview.slides} targetEpoch={targetEpoch} onTarget={onTarget} />
+        )}
+        {activeFile && !error && preview?.type === 'docx' && (
+          <WordPreview filename={activeFile} refreshKey={refreshKey} onTarget={onTarget} />
+        )}
         {activeFile && !error && preview?.type === 'csv' && <pre className="csv-preview">{preview.content}</pre>}
         {activeFile && !error && preview?.type === 'unsupported' && (
           <div className="preview-message">このファイル形式のプレビューには対応していません</div>

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { useSpeechInput } from '../hooks/useSpeechInput'
-import type { ChatMessage, ToolCallPart } from '../types'
+import type { ChatMessage, TargetSelection, ToolCallPart } from '../types'
 
 const TOOL_LABELS: Record<string, string> = {
   list_files: 'ファイル一覧',
@@ -115,11 +115,14 @@ interface ChatProps {
   modelName: string
   width: number
   activeFile: string | null
+  /** プレビュー上でマウス選択された「対象箇所」。次のメッセージ冒頭に差し込む */
+  target: TargetSelection | null
+  onClearTarget: () => void
   onSend: (text: string) => void
   onReset: () => void
 }
 
-export function Chat({ messages, busy, connected, statusWarning, modelName, width, activeFile, onSend, onReset }: ChatProps) {
+export function Chat({ messages, busy, connected, statusWarning, modelName, width, activeFile, target, onClearTarget, onSend, onReset }: ChatProps) {
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -151,7 +154,9 @@ export function Chat({ messages, busy, connected, statusWarning, modelName, widt
     const text = input.trim()
     if (!text || busy || !connected) return
     speech.stop()
-    onSend(text)
+    // プレビューで選択した対象箇所があれば、メッセージ冒頭に付けてAIに場所を伝える
+    onSend(target ? `（対象箇所: ${target.file} の ${target.label}）\n${text}` : text)
+    onClearTarget()
     setInput('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
   }
@@ -187,6 +192,12 @@ export function Chat({ messages, busy, connected, statusWarning, modelName, widt
         )}
       </div>
       <div className="chat-input-area">
+        {target && (
+          <div className="target-chip" title="次のメッセージは、この場所を対象として送られます">
+            <span className="target-chip-label">📍 {target.file} の {target.label}</span>
+            <button onClick={onClearTarget} aria-label="対象の選択を解除" title="選択を解除">✕</button>
+          </div>
+        )}
         {activeFile && (
           <div className="quick-presets" title={`表示中の「${activeFile}」に対して実行します`}>
             {PRESETS.map((p) => (

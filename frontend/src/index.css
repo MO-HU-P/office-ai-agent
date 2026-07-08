@@ -469,3 +469,24 @@ button { font-family: inherit; cursor: pointer; }
 .diff-line.del { background: #fce8e6; color: #a50e0e; }
 .diff-line.ctx { color: var(--text-2); }
 .diff-line.skip { color: var(--text-2); justify-content: center; background: var(--surface); }
+
+/* ---------- 対象箇所の選択(部分修正のマウス指定) ---------- */
+.target-chip {
+  display: flex; align-items: center; gap: 8px;
+  background: #e8f0fe; color: #174ea6; border: 1px solid #c6dafc;
+  border-radius: 8px; padding: 5px 10px; margin-bottom: 8px; font-size: 12.5px;
+}
+.target-chip-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.target-chip button {
+  flex: none; color: #174ea6; font-size: 13px; line-height: 1;
+  padding: 2px 4px; border-radius: 4px;
+}
+.target-chip button:hover { background: rgba(23, 78, 166, 0.12); }
+
+/* Excel: 選択中セルは背景色を保ったまま青を重ねる(inset shadowなので元の色は消えない) */
+.excel-grid td { cursor: cell; }
+.excel-grid td.sel { box-shadow: inset 0 0 0 9999px rgba(26, 115, 232, 0.18); }
+
+/* PowerPoint: 対象に選んだスライドは青枠で示す */
+.ppt-main img { cursor: pointer; }
+.ppt-main img.target-selected { outline: 3px solid #1a73e8; outline-offset: -3px; border-radius: 2px; }
