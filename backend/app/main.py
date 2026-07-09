@@ -366,10 +366,11 @@ async def websocket_endpoint(ws: WebSocket):
     async def emit(event: dict):
         await ws.send_json(event)
 
-    async def run_and_watch(content: str, history: list) -> list:
+    async def run_and_watch(content: str, chat_history: list) -> list:
         """エージェントを実行しつつ切断を監視する。切断されたら実行を即キャンセルする
-        (LLM応答待ちの間に切断されると、送信も受信もしないままタスクが残り続けるため)。"""
-        agent_task = asyncio.create_task(run_agent(content, history, emit))
+        (LLM応答待ちの間に切断されると、送信も受信もしないままタスクが残り続けるため)。
+        引数名を history にするとバックアップ管理モジュール(services.history)を隠してしまうので注意。"""
+        agent_task = asyncio.create_task(run_agent(content, chat_history, emit))
         watch_task = asyncio.create_task(ws.receive_text())  # 実行中の受信は切断検知にだけ使う
         try:
             done, _ = await asyncio.wait({agent_task, watch_task}, return_when=asyncio.FIRST_COMPLETED)
