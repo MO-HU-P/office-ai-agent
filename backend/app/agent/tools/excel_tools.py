@@ -33,6 +33,18 @@ def _set_value(ws, ref: str, value: Any):
         cell.value = value
 
 
+def _overwrite_warning(refs: list[str]) -> str:
+    """既に値があったセルを上書きしたことをモデルに知らせる注意書き。
+    モデルが書き込み位置を誤って既存データを消したとき(表の途中に結果を書く等)、
+    次のターンで気づいて restore_file でやり直せるようにする。"""
+    if not refs:
+        return ""
+    shown = ", ".join(refs[:8]) + (" ほか" if len(refs) > 8 else "")
+    return (f"\n⚠️ 注意: {len(refs)}個のセルには既に値があり、上書きしました({shown})。"
+            "意図した更新ならそのまま進めてよい。既存の表を誤って上書きした場合は、"
+            "restore_file でこの書き込みの前に戻し、既存データの最終行より下か新しいシートに書き直すこと。")
+
+
 @tool
 def excel_create(filename: str, sheet_name: str = "Sheet1") -> str:
     """新しいExcelブック(.xlsx)を作成する。filenameは必ず.xlsxで終わること。"""
@@ -82,10 +94,14 @@ def excel_write_cells(filename: str, cells: dict[str, Any], sheet: str = "") -> 
     "=" で始まる文字列は数式として書き込まれる。sheetが存在しない場合は新規作成される。"""
     wb, path = _open(filename)
     ws = _sheet(wb, sheet or None)
+    overwritten = []
     for ref, value in cells.items():
+        if ws[ref].value is not None:
+            overwritten.append(ref)
         _set_value(ws, ref, value)
     atomic_save(wb.save, path)
-    return f"{filename} のシート「{ws.title}」に {len(cells)} セルを書き込みました"
+    return (f"{filename} のシート「{ws.title}」に {len(cells)} セルを書き込みました"
+            + _overwrite_warning(overwritten))
 
 
 @tool
@@ -96,13 +112,17 @@ def excel_write_rows(filename: str, start_cell: str, rows: list[list[Any]], shee
     ws = _sheet(wb, sheet or None)
     min_c, min_r, _, _ = range_boundaries(start_cell)
     n = 0
+    overwritten = []
     for ri, row in enumerate(rows):
         for ci, value in enumerate(row):
             ref = f"{get_column_letter(min_c + ci)}{min_r + ri}"
+            if ws[ref].value is not None:
+                overwritten.append(ref)
             _set_value(ws, ref, value)
             n += 1
     atomic_save(wb.save, path)
-    return f"{filename} のシート「{ws.title}」に {len(rows)}行 ({n}セル) を書き込みました"
+    return (f"{filename} のシート「{ws.title}」に {len(rows)}行 ({n}セル) を書き込みました"
+            + _overwrite_warning(overwritten))
 
 
 @tool
