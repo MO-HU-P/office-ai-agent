@@ -1,4 +1,5 @@
 """PowerPoint (.pptx) 操作ツール群"""
+from pathlib import Path
 from typing import Any, Optional
 
 from langchain_core.tools import tool
@@ -19,12 +20,23 @@ LAYOUT_SECTION = 2
 LAYOUT_TITLE_ONLY = 5
 LAYOUT_BLANK = 6
 
+# 同梱のデザインテンプレート(16:9・アプリUIと同じGoogle風配色。assets/build_theme.py で生成)
+_TEMPLATE_PATH = Path(__file__).parent.parent / "assets" / "default_theme.pptx"
+
 
 def _open(filename: str):
     path = resolve_workspace_path(filename, must_exist=True)
     if path.suffix != ".pptx":
         raise ValueError("PowerPointは .pptx ファイルを指定してください")
     return Presentation(str(path)), str(path)
+
+
+def _fit_width(prs, left: float, width: float) -> float:
+    """既定の幅がスライド(4:3の既存ファイル等)からはみ出す場合、右余白0.5cmを残して縮める。"""
+    slide_w = prs.slide_width / 360000  # cm
+    if left + width > slide_w - 0.5:
+        width = max(slide_w - left - 0.5, 2.0)
+    return width
 
 
 def _fill_bullets(body_shape, bullets: list[str]):
@@ -45,11 +57,12 @@ def _fill_bullets(body_shape, bullets: list[str]):
 @tool
 def ppt_create(filename: str, title: str = "", subtitle: str = "") -> str:
     """新しいPowerPoint(.pptx)を作成する。filenameは必ず.pptxで終わること。
-    titleを指定するとタイトルスライドが追加される。"""
+    titleを指定するとタイトルスライドが追加される。
+    16:9のデザイン済みテンプレート(配色・フォント・装飾入り)で作られる。"""
     path = resolve_workspace_path(filename)
     if path.suffix != ".pptx":
         return "エラー: filenameは .pptx で終わる必要があります"
-    prs = Presentation()
+    prs = Presentation(str(_TEMPLATE_PATH)) if _TEMPLATE_PATH.exists() else Presentation()
     if title:
         slide = prs.slides.add_slide(prs.slide_layouts[LAYOUT_TITLE])
         slide.shapes.title.text = title
@@ -236,7 +249,7 @@ def ppt_add_shape(
     font_color: str = "",
 ) -> str:
     """既存スライドに図形またはテキストボックスを追加する。位置・大きさの単位はcm
-    (標準4:3スライドは幅25.4cm x 高さ19.05cm)。slide_numberは1始まり。
+    (既定の16:9スライドは幅33.87cm x 高さ19.05cm。実寸はppt_readで確認できる)。slide_numberは1始まり。
     shape: rectangle / rounded_rectangle / ellipse / arrow_right / arrow_down / star / text(枠なしテキストボックス)。
     textに改行(\\n)を入れると複数行になる。fill_color/font_colorは "#RRGGBB" 形式。"""
     prs, path = _open(filename)
@@ -271,7 +284,7 @@ def ppt_add_shape(
 @tool
 def ppt_add_image(filename: str, slide_number: int, image_file: str, left: float = 2.0, top: float = 4.0, width: float = 0) -> str:
     """既存スライドにワークスペース内の画像ファイル(PNG/JPEGなど)を挿入する。
-    位置・大きさの単位はcm(標準4:3スライドは幅25.4cm x 高さ19.05cm)。slide_numberは1始まり。
+    位置・大きさの単位はcm(既定の16:9スライドは幅33.87cm x 高さ19.05cm)。slide_numberは1始まり。
     widthを指定すると縦横比を保ったままその幅に拡大縮小され、省略すると元の大きさで挿入される。"""
     prs, path = _open(filename)
     slide = _get_slide(prs, slide_number)
@@ -291,21 +304,22 @@ def ppt_add_table(
     filename: str,
     slide_number: int,
     rows: list[list[Any]],
-    left: float = 1.5,
+    left: float = 1.7,
     top: float = 4.5,
-    width: float = 22.0,
+    width: float = 30.5,
     header: bool = True,
     font_size: float = 14,
 ) -> str:
     """既存スライドに表を追加する。rowsは2次元配列(行のリスト)で、セルは文字列・数値どちらでもよい。
     header=Trueなら1行目が見出し行になる。
-    位置・大きさの単位はcm(標準4:3スライドは幅25.4cm x 高さ19.05cm)。slide_numberは1始まり。"""
+    位置・大きさの単位はcm(既定の16:9スライドは幅33.87cm x 高さ19.05cm)。slide_numberは1始まり。"""
     prs, path = _open(filename)
     slide = _get_slide(prs, slide_number)
     if slide is None:
         return _slide_range_error(prs, slide_number)
     if not rows or not rows[0]:
         return "エラー: rowsが空です"
+    width = _fit_width(prs, left, width)
     n_cols = max(len(r) for r in rows)
     height = Cm(min(1.2 * len(rows), 14.0))  # 行数に応じた高さ(あふれた分は自動で伸びる)
     table = slide.shapes.add_table(len(rows), n_cols, Cm(left), Cm(top), Cm(width), height).table
@@ -329,10 +343,10 @@ def ppt_add_chart(
     categories: list[str],
     series: dict[str, list[float]],
     title: str = "",
-    left: float = 1.5,
-    top: float = 3.5,
-    width: float = 22.0,
-    height: float = 13.0,
+    left: float = 1.7,
+    top: float = 3.9,
+    width: float = 30.5,
+    height: float = 13.5,
 ) -> str:
     """既存スライドにPowerPoint上で編集できるグラフを追加する。画像ではなくネイティブのグラフなので、
     あとからPowerPointで数値や色を変更できる。位置・大きさの単位はcm。slide_numberは1始まり。
@@ -354,6 +368,7 @@ def ppt_add_chart(
     slide = _get_slide(prs, slide_number)
     if slide is None:
         return _slide_range_error(prs, slide_number)
+    width = _fit_width(prs, left, width)
     data = CategoryChartData()
     data.categories = categories
     items = list(series.items())[:1] if chart_type == "pie" else series.items()

@@ -87,6 +87,29 @@ VISION_RULE = """- あなたは画像を見ることができる。PowerPointや
 文字のはみ出し・図形の重なり・不自然なレイアウトがないか自分の目で確認し、問題があれば修正してもう一度確認する。
 """
 
+# PPTX関連の依頼のときだけSYSTEM_PROMPTに追記するデザインガイド。
+# 常駐させないのは、Word/Excelだけの依頼でトークンを消費しないため
+# (特にローカルモデルのコンテキストを圧迫しない)。
+_DESIGN_GUIDE_PATH = Path(__file__).parent / "design_guide.md"
+_PPTX_HINT_RE = re.compile(r"\.pptx|スライド|パワポ|パワーポイント|プレゼン|powerpoint", re.IGNORECASE)
+
+
+def _load_design_guide() -> str:
+    """design_guide.md を読む(都度読み。ファイル編集だけでガイドを調整できる)。"""
+    try:
+        return _DESIGN_GUIDE_PATH.read_text(encoding="utf-8")
+    except OSError:
+        logger.exception("design_guide.md の読み込みに失敗")
+        return ""
+
+
+def _wants_design_guide(user_message: str, history: list[BaseMessage]) -> bool:
+    """PPTXに関わる依頼か判定する。「続きを作って」のような継続依頼にも効くよう、
+    直近の履歴に .pptx が現れる場合も対象にする。"""
+    if _PPTX_HINT_RE.search(user_message):
+        return True
+    return any(".pptx" in str(m.content).lower() for m in history[-8:])
+
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -254,6 +277,10 @@ async def run_agent(user_message: str, history: list[BaseMessage], emit: EmitFn)
     tools = ALL_TOOLS + RENDER_TOOLS if vision else ALL_TOOLS
     tool_map = {t.name: t for t in tools}
     system_prompt = (SYSTEM_PROMPT + VISION_RULE) if vision else SYSTEM_PROMPT
+    if _wants_design_guide(user_message, history):
+        guide = _load_design_guide()
+        if guide:
+            system_prompt += "\n\n" + guide
     llm = build_llm().bind_tools(tools)
     messages: list[BaseMessage] = [SystemMessage(system_prompt), *history, HumanMessage(user_message)]
     # この依頼(ターン)中のバックアップをひとまとめにする。「元に戻して」「変更箇所の表示」は

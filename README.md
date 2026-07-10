@@ -12,7 +12,7 @@ Ask in plain language ("make a monthly sales spreadsheet with a totals row") and
 
 - **Excel** — build tables, formulas, aggregation, formatting, conditional highlighting, charts
 - **Word** — documents with headings/lists/tables, batch edits, copying the look & feel of an existing document to another
-- **PowerPoint** — multi-slide decks with shapes, images, tables, and charts
+- **PowerPoint** — multi-slide decks with shapes, images, tables, and charts. Decks are created from a bundled 16:9 design template (theme colors matching the app's Google-style palette, Japanese fonts, layout accents), and a slide-design guide (`design_guide.md`: composition patterns, spacing rules, QA checklist) is auto-injected into the system prompt for PPTX requests only — so even a request with no design instructions comes out polished
 - **Review, don't overwrite (Word)** — the agent can propose fixes as tracked changes you accept/reject in real Word (rendered as red strike-through / green underline in the preview), or leave margin comments, instead of editing in place
 - **Translate (Word / PowerPoint / Excel)** — translate a document into another language; the agent first asks whether to overwrite the original text or keep it and show the translation side-by-side, then preserves formatting. Numbers, dates, and Excel formulas are left untouched, and translated slides are checked for overflow with a vision model
 - **Compare versions** — diff two `.docx` / `.xlsx` / `.pptx` files (by content) into a plain-language summary of what changed
