@@ -61,21 +61,38 @@ const PRESETS: { label: string; icon: string; prompt: (file: string) => string }
   { label: '匿名化', icon: '🕶️', prompt: (f) => `「${f}」に含まれる個人情報を、元のファイルは残したまま匿名化してください。` },
 ]
 
+// ツール引数のうち、ファイル名を指すキー(表示順: 元→先の順になるよう並べる)
+const FILE_ARG_KEYS = [
+  'filename', 'source', 'old_name', 'file_a', 'template_filename', 'image_file',
+  'dest', 'new_name', 'file_b', 'output_filename',
+]
+
+// 引数のJSONから対象ファイル名だけを取り出す(JSONそのものは非エンジニアには見せない)
+function fileArgsOf(args: string): string[] {
+  try {
+    const obj = JSON.parse(args)
+    return FILE_ARG_KEYS.map((k) => obj[k]).filter((v): v is string => typeof v === 'string' && v !== '')
+  } catch {
+    return []
+  }
+}
+
 function ToolChip({ part }: { part: ToolCallPart }) {
   const [open, setOpen] = useState(false)
   const label = TOOL_LABELS[part.name] ?? part.name
+  const files = fileArgsOf(part.args).join(' → ')
   return (
     <div className={`tool-chip ${part.status}`}>
-      <button className="tool-chip-head" onClick={() => setOpen(!open)}>
+      <button className="tool-chip-head" onClick={() => setOpen(!open)} title={part.name}>
         <span className="tool-chip-icon">
           {part.status === 'running' ? <span className="spinner" /> : part.status === 'ok' ? '✓' : '!'}
         </span>
         <span className="tool-chip-label">{label}</span>
-        <code className="tool-chip-name">{part.name}</code>
+        {files && <code className="tool-chip-name">{files}</code>}
       </button>
-      {open && (
+      {open && (files || part.result) && (
         <div className="tool-chip-detail">
-          <div><b>引数:</b> <code>{part.args}</code></div>
+          {files && <div><b>対象:</b> {files}</div>}
           {part.result && <div><b>結果:</b> {part.result}</div>}
         </div>
       )}
@@ -86,7 +103,9 @@ function ToolChip({ part }: { part: ToolCallPart }) {
 function Message({ msg }: { msg: ChatMessage }) {
   if (msg.role === 'user') {
     const text = msg.parts.map((p) => (p.kind === 'text' ? p.content : '')).join('')
-    return <div className="msg user"><div className="bubble">{text}</div></div>
+    // 自動で差し込んだ「（表示中のファイル: …）」はAIへの伝達用なので、吹き出しには見せない
+    const display = text.replace(/^（表示中のファイル: .+?）\n/, '')
+    return <div className="msg user"><div className="bubble">{display}</div></div>
   }
   return (
     <div className="msg assistant">
@@ -154,8 +173,15 @@ export function Chat({ messages, busy, connected, statusWarning, modelName, widt
     const text = input.trim()
     if (!text || busy || !connected) return
     speech.stop()
-    // プレビューで選択した対象箇所があれば、メッセージ冒頭に付けてAIに場所を伝える
-    onSend(target ? `（対象箇所: ${target.file} の ${target.label}）\n${text}` : text)
+    // プレビューで選択した対象箇所（ファイル名を含む）があればそれを、なければ表示中の
+    // ファイル名をメッセージ冒頭に付ける。ファイル名を書かなくても表示中のファイルが
+    // 対象になり、別のファイル名を書けばそちらが優先される(SYSTEM_PROMPTのルール)。
+    const prefix = target
+      ? `（対象箇所: ${target.file} の ${target.label}）\n`
+      : activeFile
+        ? `（表示中のファイル: ${activeFile}）\n`
+        : ''
+    onSend(prefix + text)
     onClearTarget()
     setInput('')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
