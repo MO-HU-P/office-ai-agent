@@ -1,4 +1,5 @@
 """Excel (.xlsx) 操作ツール群"""
+from copy import copy
 from typing import Any, Optional
 
 from langchain_core.tools import tool
@@ -8,6 +9,7 @@ from openpyxl.utils import get_column_letter, range_boundaries
 
 from ...atomic import atomic_save
 from ...config import resolve_workspace_path
+from .inline_format import describe_format, validate_format_args
 
 
 def _open(filename: str):
@@ -182,6 +184,57 @@ def excel_format(
     return f"{cell_range} に書式を設定しました"
 
 
+@tool
+def excel_format_text(
+    filename: str,
+    keywords: list[str],
+    sheet: str = "",
+    color: str = "",
+    bold: Optional[bool] = None,
+    italic: Optional[bool] = None,
+    underline: Optional[bool] = None,
+) -> str:
+    """Excelのシートから特定の語句(キーワード)を含むセルを探し、文字に色・太字などの書式を付ける。
+    「重要な用語を赤字にして」のような依頼に使う。Excelの文字書式はセル単位のため、
+    セル内の一部だけでなくそのセルの文字全体に適用される。sheet省略時はアクティブシートが対象。
+    colorは"#RRGGBB"形式(赤字なら"#FF0000")。bold/italic/underlineはtrueで付け、falseで外す。
+    数式("="で始まるセル)は対象外。セル範囲が分かっているときは excel_format を使う。"""
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    if error:
+        return error
+    wb, path = _open(filename)
+    if sheet and sheet not in wb.sheetnames:
+        return f"エラー: シート「{sheet}」がありません。あるシート: {', '.join(wb.sheetnames)}"
+    ws = wb[sheet] if sheet else wb.active
+    hexv = color.lstrip("#").upper() if color else ""
+    refs: list[str] = []
+    for row in ws.iter_rows():
+        for cell in row:
+            v = cell.value
+            if not isinstance(v, str) or v.startswith("="):
+                continue
+            if not any(kw in v for kw in keywords):
+                continue
+            f = copy(cell.font)  # 既存のフォント設定を保ったまま指定分だけ変える
+            if hexv:
+                f.color = Font(color=hexv).color
+            if bold is not None:
+                f.bold = bold
+            if italic is not None:
+                f.italic = italic
+            if underline is not None:
+                f.underline = "single" if underline else None
+            cell.font = f
+            refs.append(cell.coordinate)
+    if not refs:
+        return (f"「{'」「'.join(keywords)}」を含むセルはシート「{ws.title}」にありませんでした。"
+                "excel_readで実際の表記を確認してください")
+    atomic_save(wb.save, path)
+    shown = ", ".join(refs[:10]) + (" ほか" if len(refs) > 10 else "")
+    return (f"シート「{ws.title}」の{len(refs)}セル({shown})に"
+            f"書式({describe_format(color, bold, italic, underline)})を適用しました")
+
+
 def _rows_to_ranges(rows: list[int], max_col: int) -> str:
     """連続する行番号をまとめて、excel_formatに渡せる範囲文字列を作る。"""
     last_col = get_column_letter(max_col)
@@ -259,4 +312,5 @@ def excel_add_sheet(filename: str, sheet_name: str) -> str:
     return f"シート「{sheet_name}」を追加しました"
 
 
-EXCEL_TOOLS = [excel_create, excel_read, excel_query, excel_write_cells, excel_write_rows, excel_format, excel_add_sheet]
+EXCEL_TOOLS = [excel_create, excel_read, excel_query, excel_write_cells, excel_write_rows, excel_format,
+               excel_format_text, excel_add_sheet]

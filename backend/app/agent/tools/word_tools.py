@@ -1,15 +1,17 @@
 """Word (.docx) 操作ツール群"""
 import json
-from typing import Any
+from typing import Any, Optional
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
+from docx.text.run import Run
 from langchain_core.tools import tool
 
 from ...atomic import atomic_save
 from ...config import resolve_workspace_path
+from .inline_format import describe_format, find_keyword_spans, split_runs_at_spans, validate_format_args
 
 STYLE_MAP = {
     "normal": None,
@@ -342,6 +344,64 @@ def word_apply_style(filename: str, styles: dict) -> str:
     return result
 
 
+def _iter_all_paragraphs(doc):
+    """本文と表のセル内の全段落を順に返す(word_readと同じく1段目の表まで)。"""
+    yield from doc.paragraphs
+    seen: set[int] = set()
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if id(cell._tc) in seen:  # 結合セルは同じ実体が繰り返し現れるため1回だけ
+                    continue
+                seen.add(id(cell._tc))
+                yield from cell.paragraphs
+
+
+@tool
+def word_format_text(
+    filename: str,
+    keywords: list[str],
+    color: str = "",
+    bold: Optional[bool] = None,
+    italic: Optional[bool] = None,
+    underline: Optional[bool] = None,
+) -> str:
+    """Word文書内の特定の語句(キーワード)だけに文字書式を付ける。「重要な用語を赤字にして」
+    「◯◯をすべて太字にして」のような、段落の一部の文字だけの色付け・強調に使う
+    (段落全体のスタイル変更はword_edit_paragraph、文書全体の体裁はword_apply_styleを使う)。
+    文書全体(表の中も含む)からkeywordsの全出現箇所を探して同じ書式を適用する。
+    colorは"#RRGGBB"形式(赤字なら"#FF0000")。bold/italic/underlineはtrueで付け、falseで外す。
+    color / bold / italic / underline のうち指定したものだけが変更される。"""
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    if error:
+        return error
+    doc, path = _open(filename)
+    rgb = RGBColor.from_string(color.lstrip("#").upper()) if color else None
+    hit_count = 0
+    para_count = 0
+    for p in _iter_all_paragraphs(doc):
+        runs = list(p.runs)
+        spans = find_keyword_spans("".join(r.text for r in runs), keywords)
+        if not spans:
+            continue
+        for el in split_runs_at_spans([r._element for r in runs], spans):
+            run = Run(el, p)  # キーワード部分のrunにだけ書式を適用する
+            if rgb is not None:
+                run.font.color.rgb = rgb
+            if bold is not None:
+                run.bold = bold
+            if italic is not None:
+                run.italic = italic
+            if underline is not None:
+                run.underline = underline
+        hit_count += len(spans)
+        para_count += 1
+    if not hit_count:
+        return f"「{'」「'.join(keywords)}」は {filename} に見つかりませんでした。word_readで実際の表記を確認してください"
+    atomic_save(doc.save, path)
+    return f"{filename} の{para_count}段落・{hit_count}箇所に書式({describe_format(color, bold, italic, underline)})を適用しました"
+
+
 @tool
 def word_add_table(filename: str, rows: list[list[Any]], header: bool = True) -> str:
     """Word文書の末尾に表を追加する。rowsは2次元配列(行のリスト)で、セルは文字列・数値どちらでもよい。
@@ -373,6 +433,7 @@ WORD_TOOLS = [
     word_append,
     word_edit_paragraph,
     word_batch_edit,
+    word_format_text,
     word_add_table,
     word_dump_style,
     word_apply_style,

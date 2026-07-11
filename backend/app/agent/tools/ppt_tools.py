@@ -9,10 +9,12 @@ from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
+from pptx.text.text import _Run
 from pptx.util import Cm, Pt
 
 from ...atomic import atomic_save
 from ...config import resolve_workspace_path
+from .inline_format import describe_format, find_keyword_spans, split_runs_at_spans, validate_format_args
 
 LAYOUT_TITLE = 0
 LAYOUT_TITLE_CONTENT = 1
@@ -493,6 +495,74 @@ def ppt_add_chart(
     return f"スライド{slide_number}に{chart_type}グラフを追加しました{overlap_note}"
 
 
+def _iter_text_frames(shapes):
+    """図形の集まりから、文字の入る全テキストフレームを返す(グループの中・表のセルも含む)。"""
+    for shape in shapes:
+        if shape.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _iter_text_frames(shape.shapes)
+            continue
+        if shape.has_text_frame:
+            yield shape.text_frame
+        if getattr(shape, "has_table", False):
+            for row in shape.table.rows:
+                for cell in row.cells:
+                    yield cell.text_frame
+
+
+@tool
+def ppt_format_text(
+    filename: str,
+    keywords: list[str],
+    slide_number: int = 0,
+    color: str = "",
+    bold: Optional[bool] = None,
+    italic: Optional[bool] = None,
+    underline: Optional[bool] = None,
+) -> str:
+    """スライド内の特定の語句(キーワード)だけに文字書式を付ける。「重要な用語を赤字にして」
+    「◯◯を太字にして」のような、文中の一部の文字だけの色付け・強調に使う。
+    タイトル・本文・図形・表の中からkeywordsの全出現箇所を探して同じ書式を適用する。
+    slide_numberは1始まりで、0(既定)なら全スライドが対象。colorは"#RRGGBB"形式(赤字なら"#FF0000")。
+    bold/italic/underlineはtrueで付け、falseで外す。指定したものだけが変更される。"""
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    if error:
+        return error
+    prs, path = _open(filename)
+    if slide_number:
+        slide = _get_slide(prs, slide_number)
+        if slide is None:
+            return _slide_range_error(prs, slide_number)
+        slides = [slide]
+    else:
+        slides = list(prs.slides)
+    rgb = RGBColor.from_string(color.lstrip("#").upper()) if color else None
+    hit_count = 0
+    for slide in slides:
+        for tf in _iter_text_frames(slide.shapes):
+            for p in tf.paragraphs:
+                runs = list(p.runs)
+                spans = find_keyword_spans("".join(r.text for r in runs), keywords)
+                if not spans:
+                    continue
+                for el in split_runs_at_spans([r._r for r in runs], spans):
+                    run = _Run(el, p)  # キーワード部分のrunにだけ書式を適用する
+                    if rgb is not None:
+                        run.font.color.rgb = rgb
+                    if bold is not None:
+                        run.font.bold = bold
+                    if italic is not None:
+                        run.font.italic = italic
+                    if underline is not None:
+                        run.font.underline = underline
+                hit_count += len(spans)
+    if not hit_count:
+        where = f"スライド{slide_number}" if slide_number else filename
+        return f"「{'」「'.join(keywords)}」は {where} に見つかりませんでした。ppt_readで実際の表記を確認してください"
+    atomic_save(prs.save, path)
+    where = f"スライド{slide_number}" if slide_number else f"{filename} 全体"
+    return f"{where}の{hit_count}箇所に書式({describe_format(color, bold, italic, underline)})を適用しました"
+
+
 @tool
 def ppt_delete_shape(filename: str, slide_number: int, shape_numbers: list[int]) -> str:
     """スライドから図形・画像・テキストボックスなどを削除する。はみ出しや重なりを直すときに、
@@ -570,6 +640,7 @@ PPT_TOOLS = [
     ppt_read,
     ppt_edit_slide,
     ppt_batch_edit,
+    ppt_format_text,
     ppt_add_shape,
     ppt_add_image,
     ppt_add_table,
