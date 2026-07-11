@@ -4,19 +4,34 @@ from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from langchain_core.messages import AIMessage, HumanMessage
 
 from app.agent.loop import _load_design_guide, _wants_design_guide
-from app.agent.tools.ppt_tools import _TEMPLATE_PATH, _fit_width, ppt_create
+from app.agent.tools.ppt_tools import _PLAIN_TEMPLATE_PATH, _TEMPLATE_PATH, _fit_width, ppt_create
 
 
-def test_bundled_template_exists_and_is_16x9():
-    assert _TEMPLATE_PATH.exists()
-    prs = Presentation(str(_TEMPLATE_PATH))
-    assert len(prs.slides) == 0  # テンプレートにスライドは含まれない
-    assert round(prs.slide_width / prs.slide_height, 2) == round(16 / 9, 2)
+def test_bundled_templates_exist_and_are_16x9():
+    for path in (_TEMPLATE_PATH, _PLAIN_TEMPLATE_PATH):
+        assert path.exists()
+        prs = Presentation(str(path))
+        assert len(prs.slides) == 0  # テンプレートにスライドは含まれない
+        assert round(prs.slide_width / prs.slide_height, 2) == round(16 / 9, 2)
 
 
-def test_ppt_create_uses_design_template(ws):
+def test_ppt_create_default_is_plain(ws):
     result = ppt_create.invoke({"filename": "deck.pptx", "title": "タイトル", "subtitle": "サブ"})
-    assert "作成しました" in result
+    assert "無地" in result
+    prs = Presentation(str(ws / "deck.pptx"))
+    assert round(prs.slide_width / prs.slide_height, 2) == round(16 / 9, 2)
+    theme_xml = prs.slide_master.part.part_related_by(RT.THEME).blob.decode()
+    assert "1A73E8" not in theme_xml  # デザインテンプレートの配色は入らない
+    assert '<a:ea typeface="游ゴシック"/>' in theme_xml  # 和文フォントだけは設定される
+    # 装飾図形(帯・バー)も無い
+    assert all(len(layout.shapes) == len(layout.placeholders) for layout in prs.slide_layouts)
+
+
+def test_ppt_create_design_uses_template(ws):
+    result = ppt_create.invoke(
+        {"filename": "deck.pptx", "title": "タイトル", "subtitle": "サブ", "design": True}
+    )
+    assert "デザインテンプレート" in result
     prs = Presentation(str(ws / "deck.pptx"))
     assert round(prs.slide_width / prs.slide_height, 2) == round(16 / 9, 2)
     theme_xml = prs.slide_master.part.part_related_by(RT.THEME).blob.decode()
@@ -36,6 +51,8 @@ def test_fit_width_shrinks_on_narrow_slide(ws):
 def test_design_guide_loads():
     guide = _load_design_guide()
     assert "スライドデザインガイド" in guide
+    assert "design=True" in guide  # おまかせデザインは求められたときだけ、の判断基準がある
+    assert "アップロード" in guide  # 持ち込みファイルのデザインを勝手に変えない指示がある
 
 
 def test_wants_design_guide_triggers():

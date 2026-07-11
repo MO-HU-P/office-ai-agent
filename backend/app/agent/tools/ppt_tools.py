@@ -24,8 +24,10 @@ LAYOUT_SECTION = 2
 LAYOUT_TITLE_ONLY = 5
 LAYOUT_BLANK = 6
 
-# 同梱のデザインテンプレート(16:9・アプリUIと同じGoogle風配色。assets/build_theme.py で生成)
+# 同梱テンプレート(どちらも16:9。assets/build_theme.py で生成)
+# theme: アプリUIと同じGoogle風配色+装飾入り(おまかせデザイン用) / plain: 無地(既定)
 _TEMPLATE_PATH = Path(__file__).parent.parent / "assets" / "default_theme.pptx"
+_PLAIN_TEMPLATE_PATH = Path(__file__).parent.parent / "assets" / "default_plain.pptx"
 
 
 def _open(filename: str):
@@ -139,21 +141,25 @@ def _avoid_title_overlap(prs, slide, top: float) -> tuple[float, str]:
 
 
 @tool
-def ppt_create(filename: str, title: str = "", subtitle: str = "") -> str:
+def ppt_create(filename: str, title: str = "", subtitle: str = "", design: bool = False) -> str:
     """新しいPowerPoint(.pptx)を作成する。filenameは必ず.pptxで終わること。
-    titleを指定するとタイトルスライドが追加される。
-    16:9のデザイン済みテンプレート(配色・フォント・装飾入り)で作られる。"""
+    titleを指定するとタイトルスライドが追加される。既定では16:9の無地(白背景・装飾なし)で作られる。
+    ユーザーが「デザインも整えて」「テンプレートを使って」「おまかせで見栄え良く」のように
+    デザインを求めたときだけ design=True にする(配色・装飾入りのデザイン済みテンプレートになる)。
+    頼まれていないのに design=True にしないこと。"""
     path = resolve_workspace_path(filename)
     if path.suffix != ".pptx":
         return "エラー: filenameは .pptx で終わる必要があります"
-    prs = Presentation(str(_TEMPLATE_PATH)) if _TEMPLATE_PATH.exists() else Presentation()
+    template = _TEMPLATE_PATH if design else _PLAIN_TEMPLATE_PATH
+    prs = Presentation(str(template)) if template.exists() else Presentation()
     if title:
         slide = prs.slides.add_slide(prs.slide_layouts[LAYOUT_TITLE])
         slide.shapes.title.text = title
         if subtitle and len(slide.placeholders) > 1:
             slide.placeholders[1].text = subtitle
     atomic_save(prs.save, path)
-    return f"{filename} を作成しました"
+    kind = "デザインテンプレート" if design else "無地"
+    return f"{filename} を作成しました({kind})"
 
 
 @tool

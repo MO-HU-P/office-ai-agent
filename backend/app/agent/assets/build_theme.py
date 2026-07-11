@@ -1,13 +1,15 @@
-"""同梱デザインテンプレート(default_theme.pptx)の生成スクリプト。
+"""同梱テンプレート(default_theme.pptx / default_plain.pptx)の生成スクリプト。
 
-python-pptx標準の白紙テンプレート(4:3・Office 2007配色)をベースに、
-16:9化・アプリのUI(frontend/src/index.css)と揃えたGoogle風テーマ配色・
-レイアウト装飾を加えたテンプレートを生成する。
+python-pptx標準の白紙テンプレート(4:3・Office 2007配色)をベースに2種類を生成する:
+- default_theme.pptx: 16:9化+アプリのUI(frontend/src/index.css)と揃えたGoogle風
+  テーマ配色+レイアウト装飾入り。「おまかせデザイン」(ppt_create design=True)用。
+- default_plain.pptx: 16:9化+和文フォント設定のみの無地(白背景・装飾なし)。
+  ppt_create の既定。PowerPointで普通に新規作成したファイルに近い見た目。
 
-デザインの原則: 配色・フォント・装飾はこのテンプレート(データ)に持たせ、
+デザインの原則: 配色・フォント・装飾はテンプレート(データ)に持たせ、
 エージェントは中身を流し込むだけにする。テーマ色を差し替えているため、
 表(既定スタイルはaccent1)・図形(既定塗りはaccent1)・グラフ(系列色はaccent1〜6)の
-既定の見た目もこのテンプレートに追従する。
+既定の見た目もテンプレートに追従する。
 
 再生成: docker compose run --rm --no-deps -v ./backend:/srv -w /srv backend \
         python app/agent/assets/build_theme.py
@@ -36,11 +38,12 @@ BLUE_TINT = "E8F0FE" # 装飾用の薄い青(UIの選択色と同系)
 SLIDE_W, SLIDE_H = Cm(33.867), Cm(19.05)  # 16:9
 
 
-def _replace_theme(prs: Presentation) -> None:
-    """テーマXMLの配色とフォントを差し替える(表・図形・グラフの既定色がここから決まる)。"""
+def _replace_theme(prs: Presentation, colors: bool = True) -> None:
+    """テーマXMLの配色とフォントを差し替える(表・図形・グラフの既定色がここから決まる)。
+    colors=Falseなら和文フォントの設定だけ行う(無地テンプレート用。配色はOffice既定のまま)。"""
     theme_part = prs.slide_master.part.part_related_by(RT.THEME)
     xml = theme_part.blob.decode("utf-8")
-    replacements = [
+    color_replacements = [
         # 本文色・背景色(Office 2007テーマの既定値からの置換。値が変わったら要確認)
         ('<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>',
          f'<a:dk1><a:srgbClr val="{TEXT}"/></a:dk1>'),
@@ -52,10 +55,13 @@ def _replace_theme(prs: Presentation) -> None:
         ('<a:accent4><a:srgbClr val="8064A2"/></a:accent4>', f'<a:accent4><a:srgbClr val="{RED}"/></a:accent4>'),
         ('<a:accent5><a:srgbClr val="4BACC6"/></a:accent5>', f'<a:accent5><a:srgbClr val="{PURPLE}"/></a:accent5>'),
         ('<a:accent6><a:srgbClr val="F79646"/></a:accent6>', f'<a:accent6><a:srgbClr val="{TEAL}"/></a:accent6>'),
+    ]
+    font_replacements = [
         # フォント: 和文は游ゴシック(無ければ各環境の既定にフォールバック)
         ('<a:latin typeface="Calibri"/>', '<a:latin typeface="Yu Gothic"/>'),
         ('<a:ea typeface=""/>', '<a:ea typeface="游ゴシック"/>'),
     ]
+    replacements = (color_replacements if colors else []) + font_replacements
     for old, new in replacements:
         assert old in xml, f"テーマXMLに想定値が見つかりません(python-pptx更新の影響?): {old}"
         xml = xml.replace(old, new)
@@ -140,12 +146,13 @@ def _decorate(prs: Presentation) -> None:
     _delete_slide(prs, -1)
 
 
-def build(out_path: Path) -> None:
+def build(out_path: Path, design: bool = True) -> None:
     prs = Presentation()
     prs.slide_width, prs.slide_height = Emu(SLIDE_W), Emu(SLIDE_H)
-    _replace_theme(prs)
+    _replace_theme(prs, colors=design)
     _relayout_for_16x9(prs)
-    _decorate(prs)
+    if design:
+        _decorate(prs)
     assert len(prs.slides) == 0, "テンプレートにスライドが残っています"
     prs.save(str(out_path))
     print(f"生成しました: {out_path}")
@@ -153,3 +160,4 @@ def build(out_path: Path) -> None:
 
 if __name__ == "__main__":
     build(Path(__file__).parent / "default_theme.pptx")
+    build(Path(__file__).parent / "default_plain.pptx", design=False)
