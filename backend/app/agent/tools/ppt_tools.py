@@ -7,7 +7,7 @@ from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Cm, Pt
 
@@ -54,6 +54,86 @@ def _fill_bullets(body_shape, bullets: list[str]):
         first = False
 
 
+_TITLE_PH_TYPES = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+_BODY_PH_TYPES = (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
+
+
+def _pick_layout(prs, preferred: int, need_body: bool):
+    """スライドレイアウトを選ぶ。同梱テンプレートや標準的なファイルでは preferred のインデックスを
+    そのまま使い、レイアウト構成が特殊なファイル(枚数が少ない・本文プレースホルダーが無い等)では、
+    必要なプレースホルダーを実際に持つレイアウトを探して代わりに使う。"""
+
+    def ph_types(layout):
+        return [ph.placeholder_format.type for ph in layout.placeholders]
+
+    def ok(layout):
+        types = ph_types(layout)
+        if not any(t in _TITLE_PH_TYPES for t in types):
+            return False
+        return (not need_body) or any(t in _BODY_PH_TYPES for t in types)
+
+    layouts = list(prs.slide_layouts)
+    if preferred < len(layouts) and ok(layouts[preferred]):
+        return layouts[preferred]
+    candidates = [l for l in layouts if ok(l)]
+    if candidates:
+        if not need_body:  # タイトルのみが目的なら、本文プレースホルダーの無いレイアウトを優先する
+            no_body = [l for l in candidates if not any(t in _BODY_PH_TYPES for t in ph_types(l))]
+            if no_body:
+                return no_body[0]
+        return candidates[0]
+    # 条件を満たすレイアウトが無い→一番シンプルなものを使い、不足分はテキストボックスで補う
+    return min(layouts, key=lambda l: len(l.placeholders)) if layouts else None
+
+
+def _find_body_placeholder(slide):
+    """箇条書きを入れられる本文プレースホルダーを探す(無ければNone)。"""
+    for ph in slide.placeholders:
+        if ph.placeholder_format.type in _BODY_PH_TYPES and ph.has_text_frame:
+            return ph
+    return None
+
+
+def _add_title_textbox(prs, slide, title: str):
+    """タイトルプレースホルダーの無いスライドに、タイトル代わりのテキストボックスを置く。"""
+    w = prs.slide_width / 360000
+    h = prs.slide_height / 360000
+    box = slide.shapes.add_textbox(Cm(w * 0.05), Cm(h * 0.05), Cm(w * 0.9), Cm(h * 0.14))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.text = title
+    for run in tf.paragraphs[0].runs:
+        run.font.size = Pt(28)
+        run.font.bold = True
+    return box
+
+
+def _title_bottom_cm(slide) -> Optional[float]:
+    """タイトルに文字が入っている場合、その下端の位置(cm)を返す。タイトルが無い/空なら None。"""
+    try:
+        title = slide.shapes.title
+        if title is None or not title.has_text_frame or not title.text_frame.text.strip():
+            return None
+        if title.top is None or title.height is None:
+            return None
+        return (title.top + title.height) / 360000
+    except (KeyError, AttributeError, ValueError):
+        return None
+
+
+def _avoid_title_overlap(prs, slide, top: float) -> tuple[float, str]:
+    """図形・表・グラフ・画像がタイトルに重なる位置に置かれそうなら、タイトルの下へ押し下げる。
+    (調整後のtop, 報告用の注記) を返す。下げるとスライドに収まらない場合は動かさず警告だけ返す。"""
+    bottom = _title_bottom_cm(slide)
+    if bottom is None or top >= bottom + 0.2:
+        return top, ""
+    new_top = round(bottom + 0.3, 1)
+    slide_h = prs.slide_height / 360000
+    if new_top > slide_h - 3.0:
+        return top, f"\n⚠️ タイトルと重なっている可能性があります(上端{top}cm)。render_pageやppt_read(mode=\"shapes\")で確認してください"
+    return new_top, f"\n(タイトルとの重なりを避けるため、上端を{top}cm→{new_top}cmに自動調整しました)"
+
+
 @tool
 def ppt_create(filename: str, title: str = "", subtitle: str = "") -> str:
     """新しいPowerPoint(.pptx)を作成する。filenameは必ず.pptxで終わること。
@@ -79,17 +159,37 @@ def ppt_add_slide(filename: str, title: str, bullets: Optional[list[str]] = None
     section_header=Trueにすると章の区切り用スライドになる。"""
     prs, path = _open(filename)
     if section_header:
-        slide = prs.slides.add_slide(prs.slide_layouts[LAYOUT_SECTION])
-        slide.shapes.title.text = title
+        layout = _pick_layout(prs, LAYOUT_SECTION, need_body=False)
     elif bullets:
-        slide = prs.slides.add_slide(prs.slide_layouts[LAYOUT_TITLE_CONTENT])
-        slide.shapes.title.text = title
-        _fill_bullets(slide.placeholders[1], bullets)
+        layout = _pick_layout(prs, LAYOUT_TITLE_CONTENT, need_body=True)
     else:
-        slide = prs.slides.add_slide(prs.slide_layouts[LAYOUT_TITLE_ONLY])
+        layout = _pick_layout(prs, LAYOUT_TITLE_ONLY, need_body=False)
+    if layout is None:
+        return "エラー: このファイルにはスライドレイアウトが1つもありません"
+    slide = prs.slides.add_slide(layout)
+    # レイアウトにタイトル・本文のプレースホルダーが無いファイルでは、テキストボックスで代用する
+    notes = []
+    if slide.shapes.title is not None:
         slide.shapes.title.text = title
+    else:
+        _add_title_textbox(prs, slide, title)
+        notes.append("タイトルはテキストボックスで追加")
+    if bullets:
+        body = _find_body_placeholder(slide)
+        if body is not None:
+            _fill_bullets(body, bullets)
+        else:
+            w = prs.slide_width / 360000
+            h = prs.slide_height / 360000
+            box = slide.shapes.add_textbox(Cm(w * 0.06), Cm(h * 0.24), Cm(w * 0.88), Cm(h * 0.66))
+            box.text_frame.word_wrap = True
+            _fill_bullets(box, bullets)
+            notes.append("本文はテキストボックスで追加")
     atomic_save(prs.save, path)
-    return f"{filename} にスライド{len(prs.slides)}「{title}」を追加しました"
+    result = f"{filename} にスライド{len(prs.slides)}「{title}」を追加しました"
+    if notes:
+        result += f"\n(このファイルには標準のプレースホルダーが無いため: {'、'.join(notes)})"
+    return result
 
 
 _SHAPE_TYPE_NAMES = {
@@ -258,6 +358,7 @@ def ppt_add_shape(
         return _slide_range_error(prs, slide_number)
     if shape != "text" and shape not in _SHAPE_MAP:
         return f"エラー: shapeは text / {' / '.join(_SHAPE_MAP)} のいずれかを指定してください"
+    top, overlap_note = _avoid_title_overlap(prs, slide, top)
     if shape == "text":
         sp = slide.shapes.add_textbox(Cm(left), Cm(top), Cm(width), Cm(height))
     else:
@@ -278,7 +379,7 @@ def ppt_add_shape(
                 run.font.color.rgb = RGBColor.from_string(font_color.lstrip("#").upper())
     atomic_save(prs.save, path)
     label = "テキストボックス" if shape == "text" else f"図形({shape})"
-    return f"スライド{slide_number}に{label}を追加しました"
+    return f"スライド{slide_number}に{label}を追加しました{overlap_note}"
 
 
 @tool
@@ -293,10 +394,11 @@ def ppt_add_image(filename: str, slide_number: int, image_file: str, left: float
     image_path = resolve_workspace_path(image_file, must_exist=True)
     if image_path.suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".bmp"):
         return "エラー: 画像は .png / .jpg / .jpeg / .gif / .bmp のファイルを指定してください"
+    top, overlap_note = _avoid_title_overlap(prs, slide, top)
     kwargs = {"width": Cm(width)} if width and width > 0 else {}
     slide.shapes.add_picture(str(image_path), Cm(left), Cm(top), **kwargs)
     atomic_save(prs.save, path)
-    return f"スライド{slide_number}に画像 {image_file} を挿入しました"
+    return f"スライド{slide_number}に画像 {image_file} を挿入しました{overlap_note}"
 
 
 @tool
@@ -319,6 +421,7 @@ def ppt_add_table(
         return _slide_range_error(prs, slide_number)
     if not rows or not rows[0]:
         return "エラー: rowsが空です"
+    top, overlap_note = _avoid_title_overlap(prs, slide, top)
     width = _fit_width(prs, left, width)
     n_cols = max(len(r) for r in rows)
     height = Cm(min(1.2 * len(rows), 14.0))  # 行数に応じた高さ(あふれた分は自動で伸びる)
@@ -332,7 +435,7 @@ def ppt_add_table(
                 for run in p.runs:
                     run.font.size = Pt(font_size)
     atomic_save(prs.save, path)
-    return f"スライド{slide_number}に {len(rows)}x{n_cols} の表を追加しました"
+    return f"スライド{slide_number}に {len(rows)}x{n_cols} の表を追加しました{overlap_note}"
 
 
 @tool
@@ -368,6 +471,7 @@ def ppt_add_chart(
     slide = _get_slide(prs, slide_number)
     if slide is None:
         return _slide_range_error(prs, slide_number)
+    top, overlap_note = _avoid_title_overlap(prs, slide, top)
     width = _fit_width(prs, left, width)
     data = CategoryChartData()
     data.categories = categories
@@ -386,7 +490,7 @@ def ppt_add_chart(
         chart.legend.position = XL_LEGEND_POSITION.BOTTOM
         chart.legend.include_in_layout = False
     atomic_save(prs.save, path)
-    return f"スライド{slide_number}に{chart_type}グラフを追加しました"
+    return f"スライド{slide_number}に{chart_type}グラフを追加しました{overlap_note}"
 
 
 @tool
