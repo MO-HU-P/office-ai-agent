@@ -3,7 +3,9 @@ from pathlib import Path
 from typing import Any, Optional
 
 from langchain_core.tools import tool
+from lxml import etree
 from pptx import Presentation
+from pptx.oxml.ns import qn
 from pptx.chart.data import CategoryChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
@@ -509,6 +511,39 @@ def _iter_text_frames(shapes):
                     yield cell.text_frame
 
 
+def _set_east_asian_font(rpr, font: str):
+    """runの日本語文字用フォント(a:ea)を設定する。python-pptxのfont.nameはラテン文字用(a:latin)
+    しか設定しないため、日本語に効かせるにはXMLを直接操作する必要がある。"""
+    ea = rpr.find(qn("a:ea"))
+    if ea is None:
+        ea = etree.SubElement(rpr, qn("a:ea"))
+        latin = rpr.find(qn("a:latin"))
+        if latin is not None:
+            latin.addnext(ea)  # スキーマ上 a:ea は a:latin の直後
+    ea.set("typeface", font)
+
+
+# rPr内でa:highlightより後に来るべき要素(スキーマ順)。挿入位置の決定に使う
+_TAGS_AFTER_HIGHLIGHT = ("a:uLnTx", "a:uLn", "a:uFillTx", "a:uFill", "a:latin", "a:ea", "a:cs",
+                         "a:sym", "a:hlinkClick", "a:hlinkMouseOver", "a:rtl", "a:extLst")
+
+
+def _set_highlight(rpr, hexv: str):
+    """runに蛍光ペン風のハイライト(a:highlight)を設定する。python-pptxにAPIがないためXML操作。
+    PowerPoint 2019以降で表示される機能で、古いバージョンや他ソフトでは色が出ないことがある。"""
+    hl = rpr.find(qn("a:highlight"))
+    if hl is None:
+        hl = etree.SubElement(rpr, qn("a:highlight"))
+        for tag in _TAGS_AFTER_HIGHLIGHT:
+            el = rpr.find(qn(tag))
+            if el is not None:
+                el.addprevious(hl)
+                break
+    for child in list(hl):  # 既存の色指定があれば置き換える
+        hl.remove(child)
+    etree.SubElement(hl, qn("a:srgbClr")).set("val", hexv)
+
+
 @tool
 def ppt_format_text(
     filename: str,
@@ -518,13 +553,18 @@ def ppt_format_text(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     underline: Optional[bool] = None,
+    font_size: Optional[float] = None,
+    font: str = "",
+    highlight: str = "",
 ) -> str:
     """スライド内の特定の語句(キーワード)だけに文字書式を付ける。「重要な用語を赤字にして」
-    「◯◯を太字にして」のような、文中の一部の文字だけの色付け・強調に使う。
+    「◯◯に蛍光ペンを引いて」のような、文中の一部の文字だけの色付け・強調・サイズやフォントの変更に使う。
     タイトル・本文・図形・表の中からkeywordsの全出現箇所を探して同じ書式を適用する。
     slide_numberは1始まりで、0(既定)なら全スライドが対象。colorは"#RRGGBB"形式(赤字なら"#FF0000")。
-    bold/italic/underlineはtrueで付け、falseで外す。指定したものだけが変更される。"""
-    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    bold/italic/underlineはtrueで付け、falseで外す。font_sizeは文字サイズ(pt)、
+    fontはフォント名(例: "メイリオ")。highlightは蛍光ペン風の背景色で"#RRGGBB"形式(黄色なら"#FFFF00"。
+    PowerPoint 2019より古いソフトでは表示されない)。指定した項目だけが変更される。"""
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline, font_size, font, highlight)
     if error:
         return error
     prs, path = _open(filename)
@@ -554,13 +594,22 @@ def ppt_format_text(
                         run.font.italic = italic
                     if underline is not None:
                         run.font.underline = underline
+                    if font_size is not None:
+                        run.font.size = Pt(float(font_size))
+                    if font:
+                        run.font.name = font  # ラテン文字用(a:latin)
+                        _set_east_asian_font(el.get_or_add_rPr(), font)
+                    if highlight:
+                        # python-pptxのAPI呼び出し(色・フォント等)の後に足すことでrPr内の要素順を保つ
+                        _set_highlight(el.get_or_add_rPr(), highlight.lstrip("#").upper())
                 hit_count += len(spans)
     if not hit_count:
         where = f"スライド{slide_number}" if slide_number else filename
         return f"「{'」「'.join(keywords)}」は {where} に見つかりませんでした。ppt_readで実際の表記を確認してください"
     atomic_save(prs.save, path)
     where = f"スライド{slide_number}" if slide_number else f"{filename} 全体"
-    return f"{where}の{hit_count}箇所に書式({describe_format(color, bold, italic, underline)})を適用しました"
+    return (f"{where}の{hit_count}箇所に書式"
+            f"({describe_format(color, bold, italic, underline, font_size, font, highlight)})を適用しました")
 
 
 @tool

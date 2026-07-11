@@ -193,13 +193,18 @@ def excel_format_text(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     underline: Optional[bool] = None,
+    font_size: Optional[float] = None,
+    font: str = "",
+    highlight: str = "",
 ) -> str:
     """Excelのシートから特定の語句(キーワード)を含むセルを探し、文字に色・太字などの書式を付ける。
-    「重要な用語を赤字にして」のような依頼に使う。Excelの文字書式はセル単位のため、
+    「重要な用語を赤字にして」「◯◯のセルに蛍光ペンを」のような依頼に使う。Excelの文字書式はセル単位のため、
     セル内の一部だけでなくそのセルの文字全体に適用される。sheet省略時はアクティブシートが対象。
     colorは"#RRGGBB"形式(赤字なら"#FF0000")。bold/italic/underlineはtrueで付け、falseで外す。
+    font_sizeは文字サイズ(pt)、fontはフォント名(例: "游ゴシック")。
+    highlightは蛍光ペンの代わりにセルの塗りつぶし色になる("#RRGGBB"形式。黄色なら"#FFFF00")。
     数式("="で始まるセル)は対象外。セル範囲が分かっているときは excel_format を使う。"""
-    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline, font_size, font, highlight)
     if error:
         return error
     wb, path = _open(filename)
@@ -207,6 +212,7 @@ def excel_format_text(
         return f"エラー: シート「{sheet}」がありません。あるシート: {', '.join(wb.sheetnames)}"
     ws = wb[sheet] if sheet else wb.active
     hexv = color.lstrip("#").upper() if color else ""
+    hl_hex = highlight.lstrip("#").upper() if highlight else ""
     refs: list[str] = []
     for row in ws.iter_rows():
         for cell in row:
@@ -224,7 +230,13 @@ def excel_format_text(
                 f.italic = italic
             if underline is not None:
                 f.underline = "single" if underline else None
+            if font_size is not None:
+                f.size = float(font_size)
+            if font:
+                f.name = font
             cell.font = f
+            if hl_hex:
+                cell.fill = PatternFill(start_color=hl_hex, end_color=hl_hex, fill_type="solid")
             refs.append(cell.coordinate)
     if not refs:
         return (f"「{'」「'.join(keywords)}」を含むセルはシート「{ws.title}」にありませんでした。"
@@ -232,7 +244,7 @@ def excel_format_text(
     atomic_save(wb.save, path)
     shown = ", ".join(refs[:10]) + (" ほか" if len(refs) > 10 else "")
     return (f"シート「{ws.title}」の{len(refs)}セル({shown})に"
-            f"書式({describe_format(color, bold, italic, underline)})を適用しました")
+            f"書式({describe_format(color, bold, italic, underline, font_size, font, highlight)})を適用しました")
 
 
 def _rows_to_ranges(rows: list[int], max_col: int) -> str:

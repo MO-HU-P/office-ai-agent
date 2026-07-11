@@ -73,21 +73,33 @@ def split_runs_at_spans(run_els: list, spans: list[tuple[int, int]]) -> list:
     return hit_els
 
 
-def validate_format_args(keywords, color, bold, italic, underline) -> tuple[list[str], str | None]:
+def validate_format_args(
+    keywords, color, bold, italic, underline, font_size=None, font="", highlight=""
+) -> tuple[list[str], str | None]:
     """3ツール共通の引数チェック。(正規化したキーワード, エラーメッセージ or None) を返す。"""
     kws = [k for k in (keywords or []) if isinstance(k, str) and k.strip()]
     if not kws:
         return [], "エラー: keywords(書式を付ける語句のリスト)を指定してください"
-    if not color and bold is None and italic is None and underline is None:
-        return [], "エラー: color / bold / italic / underline のうち少なくとも1つを指定してください"
-    if color:
-        hexv = color.lstrip("#")
-        if len(hexv) != 6 or any(c not in "0123456789abcdefABCDEF" for c in hexv):
-            return [], 'エラー: colorは "#RRGGBB" 形式で指定してください (例: 赤字は "#FF0000")'
+    if (not color and bold is None and italic is None and underline is None
+            and font_size is None and not font and not highlight):
+        return [], ("エラー: color / bold / italic / underline / font_size / font / highlight "
+                    "のうち少なくとも1つを指定してください")
+    for name, value, example in (("color", color, '赤字は "#FF0000"'), ("highlight", highlight, '黄色は "#FFFF00"')):
+        if value:
+            hexv = value.lstrip("#")
+            if len(hexv) != 6 or any(c not in "0123456789abcdefABCDEF" for c in hexv):
+                return [], f'エラー: {name}は "#RRGGBB" 形式で指定してください (例: {example})'
+    if font_size is not None:
+        try:
+            ok = 1 <= float(font_size) <= 400
+        except (TypeError, ValueError):
+            ok = False
+        if not ok:
+            return [], "エラー: font_size(文字サイズ)は1〜400のポイント数で指定してください"
     return kws, None
 
 
-def describe_format(color, bold, italic, underline) -> str:
+def describe_format(color, bold, italic, underline, font_size=None, font="", highlight="") -> str:
     """適用した書式の報告用の説明文(例: "色#FF0000・太字")を作る。"""
     parts = []
     if color:
@@ -98,4 +110,10 @@ def describe_format(color, bold, italic, underline) -> str:
         parts.append("斜体" if italic else "斜体解除")
     if underline is not None:
         parts.append("下線" if underline else "下線解除")
+    if font_size is not None:
+        parts.append(f"サイズ{float(font_size):g}pt")
+    if font:
+        parts.append(f"フォント{font}")
+    if highlight:
+        parts.append(f"蛍光ペン{highlight if highlight.startswith('#') else '#' + highlight}")
     return "・".join(parts)

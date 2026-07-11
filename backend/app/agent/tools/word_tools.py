@@ -3,7 +3,7 @@ import json
 from typing import Any, Optional
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from docx.text.run import Run
@@ -344,6 +344,37 @@ def word_apply_style(filename: str, styles: dict) -> str:
     return result
 
 
+# Wordの蛍光ペンは固定の16色しか使えないため、"#RRGGBB"指定を最も近い色に丸めて適用する
+_HIGHLIGHT_PALETTE = {
+    WD_COLOR_INDEX.YELLOW: (0xFF, 0xFF, 0x00),
+    WD_COLOR_INDEX.BRIGHT_GREEN: (0x00, 0xFF, 0x00),
+    WD_COLOR_INDEX.TURQUOISE: (0x00, 0xFF, 0xFF),
+    WD_COLOR_INDEX.PINK: (0xFF, 0x00, 0xFF),
+    WD_COLOR_INDEX.RED: (0xFF, 0x00, 0x00),
+    WD_COLOR_INDEX.BLUE: (0x00, 0x00, 0xFF),
+    WD_COLOR_INDEX.GREEN: (0x00, 0x80, 0x00),
+    WD_COLOR_INDEX.DARK_YELLOW: (0x80, 0x80, 0x00),
+    WD_COLOR_INDEX.TEAL: (0x00, 0x80, 0x80),
+    WD_COLOR_INDEX.DARK_BLUE: (0x00, 0x00, 0x80),
+    WD_COLOR_INDEX.VIOLET: (0x80, 0x00, 0x80),
+    WD_COLOR_INDEX.DARK_RED: (0x80, 0x00, 0x00),
+    WD_COLOR_INDEX.GRAY_25: (0xC0, 0xC0, 0xC0),
+    WD_COLOR_INDEX.GRAY_50: (0x80, 0x80, 0x80),
+    WD_COLOR_INDEX.BLACK: (0x00, 0x00, 0x00),
+    WD_COLOR_INDEX.WHITE: (0xFF, 0xFF, 0xFF),
+}
+
+
+def _nearest_highlight(hexv: str):
+    """"RRGGBB"を蛍光ペンパレットの最寄り色に丸め、(色インデックス, その色の"#RRGGBB")を返す。"""
+    r, g, b = (int(hexv[i:i + 2], 16) for i in (0, 2, 4))
+    index, (pr, pg, pb) = min(
+        _HIGHLIGHT_PALETTE.items(),
+        key=lambda kv: (kv[1][0] - r) ** 2 + (kv[1][1] - g) ** 2 + (kv[1][2] - b) ** 2,
+    )
+    return index, f"#{pr:02X}{pg:02X}{pb:02X}"
+
+
 def _iter_all_paragraphs(doc):
     """本文と表のセル内の全段落を順に返す(word_readと同じく1段目の表まで)。"""
     yield from doc.paragraphs
@@ -365,18 +396,26 @@ def word_format_text(
     bold: Optional[bool] = None,
     italic: Optional[bool] = None,
     underline: Optional[bool] = None,
+    font_size: Optional[float] = None,
+    font: str = "",
+    highlight: str = "",
 ) -> str:
     """Word文書内の特定の語句(キーワード)だけに文字書式を付ける。「重要な用語を赤字にして」
-    「◯◯をすべて太字にして」のような、段落の一部の文字だけの色付け・強調に使う
+    「◯◯に蛍光ペンを引いて」のような、段落の一部の文字だけの色付け・強調・サイズやフォントの変更に使う
     (段落全体のスタイル変更はword_edit_paragraph、文書全体の体裁はword_apply_styleを使う)。
     文書全体(表の中も含む)からkeywordsの全出現箇所を探して同じ書式を適用する。
     colorは"#RRGGBB"形式(赤字なら"#FF0000")。bold/italic/underlineはtrueで付け、falseで外す。
-    color / bold / italic / underline のうち指定したものだけが変更される。"""
-    keywords, error = validate_format_args(keywords, color, bold, italic, underline)
+    font_sizeは文字サイズ(pt)、fontはフォント名(例: "游ゴシック")。
+    highlightは蛍光ペン風の背景色で"#RRGGBB"形式(黄色なら"#FFFF00")。Wordの蛍光ペンは
+    固定の16色のみのため、指定に最も近い色に丸められる。指定した項目だけが変更される。"""
+    keywords, error = validate_format_args(keywords, color, bold, italic, underline, font_size, font, highlight)
     if error:
         return error
     doc, path = _open(filename)
     rgb = RGBColor.from_string(color.lstrip("#").upper()) if color else None
+    hl_index = hl_hex = None
+    if highlight:
+        hl_index, hl_hex = _nearest_highlight(highlight.lstrip("#").upper())
     hit_count = 0
     para_count = 0
     for p in _iter_all_paragraphs(doc):
@@ -394,12 +433,26 @@ def word_format_text(
                 run.italic = italic
             if underline is not None:
                 run.underline = underline
+            if font_size is not None:
+                run.font.size = Pt(float(font_size))
+            if font:
+                run.font.name = font
+                # 日本語文字にはeastAsiaフォントが使われるため、両方に同じフォントを設定する
+                rpr = el.get_or_add_rPr()
+                rfonts = rpr.rFonts if rpr.rFonts is not None else rpr.get_or_add_rFonts()
+                rfonts.set(qn("w:eastAsia"), font)
+            if hl_index is not None:
+                run.font.highlight_color = hl_index
         hit_count += len(spans)
         para_count += 1
     if not hit_count:
         return f"「{'」「'.join(keywords)}」は {filename} に見つかりませんでした。word_readで実際の表記を確認してください"
     atomic_save(doc.save, path)
-    return f"{filename} の{para_count}段落・{hit_count}箇所に書式({describe_format(color, bold, italic, underline)})を適用しました"
+    result = (f"{filename} の{para_count}段落・{hit_count}箇所に書式"
+              f"({describe_format(color, bold, italic, underline, font_size, font, hl_hex or '')})を適用しました")
+    if hl_hex and hl_hex.lstrip("#") != highlight.lstrip("#").upper():
+        result += f"(蛍光ペンはWordで使える近い色 {hl_hex} に丸めています)"
+    return result
 
 
 @tool

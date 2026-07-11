@@ -5,11 +5,16 @@
 特にWord/PPTでは、キーワードが複数のrunにまたがっている場合の分割処理が肝。
 """
 from docx import Document
+from docx.enum.text import WD_COLOR_INDEX
+from docx.oxml.ns import qn as w_qn
+from docx.shared import Pt as DocxPt
 from docx.shared import RGBColor as DocxRGB
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from pptx import Presentation
+from pptx.oxml.ns import qn as a_qn
 from pptx.util import Cm
+from pptx.util import Pt as PptPt
 
 from app.agent.tools.excel_tools import excel_format_text
 from app.agent.tools.ppt_tools import ppt_format_text
@@ -102,6 +107,37 @@ def test_word_not_found_and_bad_args(ws):
     assert "エラー" in word_format_text.invoke({"filename": "doc.docx", "keywords": [], "color": "#FF0000"})
     assert "エラー" in word_format_text.invoke({"filename": "doc.docx", "keywords": ["本文"]})
     assert "エラー" in word_format_text.invoke({"filename": "doc.docx", "keywords": ["本文"], "color": "赤"})
+    assert "エラー" in word_format_text.invoke({"filename": "doc.docx", "keywords": ["本文"], "highlight": "黄"})
+    assert "エラー" in word_format_text.invoke({"filename": "doc.docx", "keywords": ["本文"], "font_size": 0})
+
+
+def test_word_font_size_and_font(ws):
+    _make_docx(ws, lambda d: d.add_paragraph("要点は結論から書くこと"))
+    result = word_format_text.invoke(
+        {"filename": "doc.docx", "keywords": ["結論"], "font_size": 14, "font": "游ゴシック"}
+    )
+    assert "1箇所" in result and "14pt" in result and "游ゴシック" in result
+    p = Document(str(ws / "doc.docx")).paragraphs[0]
+    assert p.text == "要点は結論から書くこと"
+    hit = next(r for r in p.runs if r.text == "結論")
+    assert hit.font.size == DocxPt(14)
+    assert hit.font.name == "游ゴシック"
+    # 日本語文字用のeastAsiaフォントも設定されている(これがないと日本語に効かない)
+    assert hit._element.rPr.rFonts.get(w_qn("w:eastAsia")) == "游ゴシック"
+    other = next(r for r in p.runs if r.text != "結論")
+    assert other.font.size is None and other.font.name is None
+
+
+def test_word_highlight_rounds_to_palette(ws):
+    _make_docx(ws, lambda d: d.add_paragraph("ここが重要ポイントです"))
+    result = word_format_text.invoke(
+        {"filename": "doc.docx", "keywords": ["重要ポイント"], "highlight": "#FFEE55"}  # 黄色に近い色
+    )
+    assert "1箇所" in result and "#FFFF00" in result and "丸め" in result
+    p = Document(str(ws / "doc.docx")).paragraphs[0]
+    hit = next(r for r in p.runs if r.text == "重要ポイント")
+    assert hit.font.highlight_color == WD_COLOR_INDEX.YELLOW
+    assert all(r.font.highlight_color is None for r in p.runs if r.text != "重要ポイント")
 
 
 # ---------- PowerPoint ----------
@@ -133,6 +169,31 @@ def test_ppt_colors_keyword_in_textbox_and_table(ws):
     cell_p = slide.shapes[1].table.cell(0, 0).text_frame.paragraphs[0]
     assert "".join(r.text for r in cell_p.runs) == "RLHFの手順"
     assert [r.text for r in cell_p.runs if r.font.color.type is not None] == ["RLHF"]
+
+
+def test_ppt_font_size_font_and_highlight(ws):
+    _make_pptx(ws)
+    result = ppt_format_text.invoke(
+        {"filename": "deck.pptx", "keywords": ["RLHF"],
+         "font_size": 28, "font": "メイリオ", "highlight": "#FFFF00"}
+    )
+    assert "2箇所" in result and "28pt" in result
+    prs = Presentation(str(ws / "deck.pptx"))
+    box_p = prs.slides[0].shapes[0].text_frame.paragraphs[0]
+    assert "".join(r.text for r in box_p.runs) == "強化学習とRLHFの概要"
+    hit = next(r for r in box_p.runs if r.text == "RLHF")
+    assert hit.font.size == PptPt(28)
+    assert hit.font.name == "メイリオ"  # ラテン文字用(a:latin)
+    rpr = hit._r.find(a_qn("a:rPr"))
+    assert rpr.find(a_qn("a:ea")).get("typeface") == "メイリオ"  # 日本語文字用
+    hl = rpr.find(a_qn("a:highlight"))
+    assert hl.find(a_qn("a:srgbClr")).get("val") == "FFFF00"
+    children = list(rpr)
+    assert children.index(hl) < children.index(rpr.find(a_qn("a:latin")))  # スキーマ順が保たれている
+    for r in box_p.runs:
+        if r.text != "RLHF":
+            other_rpr = r._r.find(a_qn("a:rPr"))
+            assert other_rpr is None or other_rpr.find(a_qn("a:highlight")) is None
 
 
 def test_ppt_slide_number_out_of_range(ws):
@@ -168,6 +229,25 @@ def test_excel_formats_matching_cells(ws):
     assert sh2["A4"].font.bold is True  # 既存の太字は保たれる
     assert sh2["A3"].font.color is None or sh2["A3"].font.color.rgb != "00FF0000"
     assert sh2["B2"].font.color is None or sh2["B2"].font.color.rgb != "00FF0000"
+
+
+def test_excel_font_size_font_and_highlight(ws):
+    path = ws / "book.xlsx"
+    wb = Workbook()
+    wb.active["A1"] = "強化学習の説明"
+    wb.active["A2"] = "その他"
+    atomic_save(wb.save, path)
+
+    result = excel_format_text.invoke(
+        {"filename": "book.xlsx", "keywords": ["強化学習"],
+         "font_size": 14, "font": "游ゴシック", "highlight": "#FFFF00"}
+    )
+    assert "1セル" in result and "A1" in result
+    sh = load_workbook(str(path)).active
+    assert sh["A1"].font.size == 14
+    assert sh["A1"].font.name == "游ゴシック"
+    assert sh["A1"].fill.fill_type == "solid" and sh["A1"].fill.start_color.rgb == "00FFFF00"
+    assert sh["A2"].fill.fill_type != "solid"
 
 
 def test_excel_missing_sheet_and_not_found(ws):
