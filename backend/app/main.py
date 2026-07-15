@@ -277,7 +277,10 @@ async def upload_file(file: UploadFile):
 @app.get("/api/files/{filename}/raw")
 async def get_raw(filename: str):
     path = _existing(filename)
-    return FileResponse(str(path), filename=path.name)
+    # no-cache = 毎回サーバーに更新確認させる(ETagが一致すれば304で中身は流れない)。
+    # 指定しないとブラウザが Last-Modified から勝手に有効期限を推測してキャッシュし、
+    # AIがファイルを更新してもプレビューが古いままになる
+    return FileResponse(str(path), filename=path.name, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/files/{filename}/preview")
