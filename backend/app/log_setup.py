@@ -37,6 +37,16 @@ class RedactSecretsFilter(logging.Filter):
         if scrubbed != msg:
             record.msg = scrubbed
             record.args = ()
+        # 例外のスタックトレースは getMessage() に含まれないため個別に墨消しする。
+        # logger.exception(...) の例外文字列(SDKがURLやヘッダーを載せることがある)は
+        # 混入経路として最も可能性が高い。exc_text を埋めておくと Formatter は
+        # formatException() を呼ばずこの墨消し済み文字列を使う
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            record.exc_text = self._scrub(record.exc_text)
+        if record.stack_info:
+            record.stack_info = self._scrub(record.stack_info)
         return True
 
 
