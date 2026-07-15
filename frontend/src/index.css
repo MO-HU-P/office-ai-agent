@@ -334,6 +334,19 @@ button { font-family: inherit; cursor: pointer; }
 }
 .ppt-nav button:hover:not(:disabled) { background: var(--surface); }
 .ppt-nav button:disabled { opacity: 0.4; cursor: default; }
+.ppt-notes { border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+.ppt-notes-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; padding: 8px 16px; border: none; background: none;
+  color: var(--text-2); font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.ppt-notes-toggle:hover { background: var(--surface); }
+.ppt-notes-caret { color: var(--text-2); font-size: 11px; }
+.ppt-notes-body {
+  padding: 0 16px 12px; max-height: 22vh; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-word;
+  font-size: 13px; line-height: 1.6; color: var(--text);
+}
 .ppt-thumbs {
   display: flex; gap: 10px; padding: 12px 16px; overflow-x: auto;
   border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0;

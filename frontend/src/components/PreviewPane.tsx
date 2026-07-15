@@ -150,7 +150,7 @@ export function PreviewPane({ files, activeFile, refreshKey, onSelect, onFilesCh
           <ExcelPreview sheets={preview.sheets} targetEpoch={targetEpoch} onTarget={onTarget} />
         )}
         {activeFile && !error && preview?.type === 'pptx' && (
-          <PptPreview slides={preview.slides} targetEpoch={targetEpoch} onTarget={onTarget} />
+          <PptPreview slides={preview.slides} notes={preview.notes} targetEpoch={targetEpoch} onTarget={onTarget} />
         )}
         {activeFile && !error && preview?.type === 'docx' && (
           <WordPreview filename={activeFile} refreshKey={refreshKey} onTarget={onTarget} />

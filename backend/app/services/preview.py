@@ -17,6 +17,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter, range_to_tuple
+from pptx import Presentation
 
 from ..config import PREVIEW_CACHE_DIR
 
@@ -417,12 +418,26 @@ def _page_images(path: Path) -> list[Path]:
     return images
 
 
+def _pptx_notes(path: Path) -> list[str]:
+    """各スライドの発表者ノート本文を、スライド順のリストで返す(ノートが無ければ空文字)。
+    (has_notes_slideで確認してから読み、空のノートスライドを生成しないようにする)"""
+    prs = Presentation(str(path))
+    return [
+        slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ""
+        for slide in prs.slides
+    ]
+
+
 async def pptx_preview(path: Path) -> dict[str, Any]:
-    """PPTXをスライドPNG群に変換し、画像URLのリストを返す。"""
+    """PPTXをスライドPNG群に変換し、画像URLと各スライドの発表者ノートを返す。"""
     images = await asyncio.to_thread(_page_images, path)
+    notes = await asyncio.to_thread(_pptx_notes, path)
+    # 通常はスライド数=画像数だが、変換のずれに備えて画像数に合わせる
+    notes = (notes + [""] * len(images))[: len(images)]
     return {
         "type": "pptx",
         "slides": [f"/api/preview_cache/{img.parent.name}/{img.name}" for img in images],
+        "notes": notes,
     }
 
 

@@ -344,6 +344,48 @@ def _slide_range_error(prs, slide_number) -> str:
     return f"エラー: スライド番号 {slide_number} は範囲外です (1〜{len(prs.slides)})"
 
 
+def _read_notes(slide) -> str:
+    """スライドの発表者ノート本文を返す。ノートが無ければ空文字。
+    (has_notes_slideで確認せずにnotes_slideへ触ると空のノートが生成されてしまうため、必ず先に確認する)"""
+    if not slide.has_notes_slide:
+        return ""
+    return slide.notes_slide.notes_text_frame.text.strip()
+
+
+@tool
+def ppt_read_notes(filename: str, slide_number: int = 0) -> str:
+    """スライドの発表者ノート(スピーカーノート)を読む。slide_numberは1始まり。
+    slide_number=0(既定)にすると全スライドのノートをまとめて返す。
+    スライドの見た目も踏まえて原稿を書くときは、先にrender_pageで該当ページを画像化して確認すること。"""
+    prs, _ = _open(filename)
+    if slide_number == 0:
+        lines = [f"全{len(prs.slides)}枚のノート"]
+        for i, slide in enumerate(prs.slides, start=1):
+            note = _read_notes(slide)
+            lines.append(f"--- スライド{i} ---")
+            lines.append(note if note else "(ノートなし)")
+        return "\n".join(lines)
+    slide = _get_slide(prs, slide_number)
+    if slide is None:
+        return _slide_range_error(prs, slide_number)
+    note = _read_notes(slide)
+    return f"スライド{slide_number}のノート:\n{note}" if note else f"スライド{slide_number}にはノートがありません"
+
+
+@tool
+def ppt_set_notes(filename: str, slide_number: int, text: str) -> str:
+    """スライドの発表者ノート(スピーカーノート)を書き込む。slide_numberは1始まり。
+    既存のノートは丸ごと置き換わる。textの改行(\\n)はそのまま段落の区切りになる。
+    空文字を渡すとノートを空にする。"""
+    prs, path = _open(filename)
+    slide = _get_slide(prs, slide_number)
+    if slide is None:
+        return _slide_range_error(prs, slide_number)
+    slide.notes_slide.notes_text_frame.text = text
+    atomic_save(prs.save, path)
+    return f"スライド{slide_number}のノートを更新しました"
+
+
 @tool
 def ppt_add_shape(
     filename: str,
@@ -693,6 +735,8 @@ PPT_TOOLS = [
     ppt_create,
     ppt_add_slide,
     ppt_read,
+    ppt_read_notes,
+    ppt_set_notes,
     ppt_edit_slide,
     ppt_batch_edit,
     ppt_format_text,

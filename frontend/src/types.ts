@@ -85,7 +85,7 @@ export interface ExcelSheet {
 
 export type PreviewData =
   | { type: 'excel'; sheets: ExcelSheet[] }
-  | { type: 'pptx'; slides: string[] }
+  | { type: 'pptx'; slides: string[]; notes?: string[] }
   | { type: 'docx' }
   | { type: 'csv'; content: string }
   | { type: 'unsupported' }

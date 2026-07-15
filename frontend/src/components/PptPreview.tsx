@@ -2,16 +2,20 @@ import { useEffect, useState } from 'react'
 
 interface PptPreviewProps {
   slides: string[]
+  /** 各スライドの発表者ノート(スライド順。無いスライドは空文字) */
+  notes?: string[]
   /** 対象箇所の選択が解除されたときに増える(選択ハイライトのリセット用) */
   targetEpoch: number
   /** スライドをクリックで対象に選んだとき(もう一度クリックで解除) */
   onTarget: (label: string | null) => void
 }
 
-export function PptPreview({ slides, targetEpoch, onTarget }: PptPreviewProps) {
+export function PptPreview({ slides, notes, targetEpoch, onTarget }: PptPreviewProps) {
   const [current, setCurrent] = useState(0)
   // 質問の対象として選択中のスライド(番号は0始まり、表示は1始まり)
   const [selected, setSelected] = useState<number | null>(null)
+  // 発表者ノートの折りたたみ(既定は開いた状態)
+  const [notesOpen, setNotesOpen] = useState(true)
 
   useEffect(() => {
     setCurrent((c) => Math.min(c, slides.length - 1))
@@ -59,6 +63,19 @@ export function PptPreview({ slides, targetEpoch, onTarget }: PptPreviewProps) {
           <button onClick={() => setCurrent((c) => Math.min(c + 1, slides.length - 1))} disabled={current === slides.length - 1}>›</button>
         </div>
       </div>
+      {notes?.[current]?.trim() && (
+        <div className="ppt-notes">
+          <button
+            className="ppt-notes-toggle"
+            onClick={() => setNotesOpen((o) => !o)}
+            aria-expanded={notesOpen}
+          >
+            <span>📝 発表者ノート</span>
+            <span className="ppt-notes-caret">{notesOpen ? '▾' : '▸'}</span>
+          </button>
+          {notesOpen && <div className="ppt-notes-body">{notes[current]}</div>}
+        </div>
+      )}
       <div className="ppt-thumbs">
         {slides.map((src, i) => (
           <button key={src} className={i === current ? 'active' : ''} onClick={() => setCurrent(i)}>
