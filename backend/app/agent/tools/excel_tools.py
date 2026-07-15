@@ -4,12 +4,29 @@ from typing import Any, Optional
 
 from langchain_core.tools import tool
 from openpyxl import Workbook, load_workbook
+from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+from openpyxl.chart.data_source import NumDataSource, NumRef
+from openpyxl.chart.error_bar import ErrorBars
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter, range_boundaries
 
 from ...atomic import atomic_save
 from ...config import resolve_workspace_path
 from .inline_format import describe_format, validate_format_args
+
+
+# グラフの系列色。プレビュー(ExcelChart.tsx)の既定色と同じ並び。
+# 隣り合う色が色覚特性のある人にも見分けられるよう検証済みなので、順番は変えないこと
+CHART_COLORS = ["2A78D6", "008300", "E87BA4", "EDA100", "1BAF7A", "EB6834", "4A3AA7", "E34948"]
+
+
+def _absolute(a1_range: str) -> str:
+    """"C2:C5" → "$C$2:$C$5"。グラフの参照式は絶対参照で書く必要がある。"""
+    min_col, min_row, max_col, max_row = range_boundaries(a1_range)
+    return (f"${get_column_letter(min_col)}${min_row}"
+            f":${get_column_letter(max_col)}${max_row}")
 
 
 def _open(filename: str):
@@ -324,5 +341,104 @@ def excel_add_sheet(filename: str, sheet_name: str) -> str:
     return f"シート「{sheet_name}」を追加しました"
 
 
+@tool
+def excel_add_chart(
+    filename: str,
+    chart_type: str,
+    data_range: str,
+    categories_range: str = "",
+    anchor: str = "",
+    sheet: str = "",
+    title: str = "",
+    x_title: str = "",
+    y_title: str = "",
+    titles_from_data: bool = True,
+    stacked: bool = False,
+    error_bars_range: str = "",
+) -> str:
+    """Excel上で編集できるグラフ(ネイティブのグラフ)をシートに追加する。画像ではないので、
+    あとからExcelで種類や色を変更でき、参照元のセルの値を直すとグラフも自動で追従する。
+    Excelのグラフはこのツールで作ること(run_pythonで画像を貼るのはWordに載せる図のときだけ)。
+    chart_type: bar(縦棒) / bar_horizontal(横棒) / line(折れ線) / pie(円)。
+    data_rangeは数値の範囲、categories_rangeは項目名の範囲をA1形式で指定する(例: "B1:C5", "A2:A5")。
+    titles_from_data=Trueなら data_range の1行目を系列名として扱う(その場合は見出し行を含めること)。
+    例: 表がA1:C5(A列=月, B列=売上, C列=利益, 1行目が見出し)のとき、
+    data_range="B1:C5", categories_range="A2:A5", anchor="E2"。
+    anchorはグラフの左上を置くセル(省略時は表の右隣)。stacked=Trueで積み上げ棒。
+    pieは最初の1系列だけが使われる。
+    error_bars_range: エラーバー(誤差範囲)にする値の範囲。標準偏差や標準誤差の列を指定すると、
+    平均の棒に±のひげが付く(例: 平均がB列・標準偏差がC列なら data_range="B1:B5",
+    error_bars_range="C2:C5")。1系列のグラフにだけ付けられる。"""
+    type_map = {"bar": BarChart, "bar_horizontal": BarChart, "line": LineChart, "pie": PieChart}
+    if chart_type not in type_map:
+        return f"エラー: chart_typeは {' / '.join(type_map)} のいずれかを指定してください"
+    wb, path = _open(filename)
+    ws = _sheet(wb, sheet or None)
+    try:
+        bounds = range_boundaries(data_range)
+    except ValueError:
+        return f"エラー: data_range「{data_range}」はA1形式(例: B1:C5)で指定してください"
+    min_col, min_row, max_col, max_row = bounds
+    if max_row - min_row < 1 and max_col - min_col < 1:
+        return "エラー: data_rangeには複数のセルを含む範囲を指定してください(例: B1:B5)"
+
+    chart = type_map[chart_type]()
+    if chart_type == "bar_horizontal":
+        chart.type = "bar"
+    if stacked and chart_type in ("bar", "bar_horizontal"):
+        chart.grouping = "stacked"
+        chart.overlap = 100  # これが無いとExcelで積み上がって見えない
+    if title:
+        chart.title = title
+    if x_title:
+        chart.x_axis.title = x_title
+    if y_title:
+        chart.y_axis.title = y_title
+    chart.add_data(Reference(ws, min_col=min_col, min_row=min_row, max_col=max_col, max_row=max_row),
+                   titles_from_data=titles_from_data)
+    if categories_range:
+        try:
+            c_min_col, c_min_row, c_max_col, c_max_row = range_boundaries(categories_range)
+        except ValueError:
+            return f"エラー: categories_range「{categories_range}」はA1形式(例: A2:A5)で指定してください"
+        chart.set_categories(Reference(ws, min_col=c_min_col, min_row=c_min_row,
+                                       max_col=c_max_col, max_row=c_max_row))
+    # 既定色はUIと同じ配色に揃える(色を指定しないとExcelのテーマ色になり、プレビューと見た目がずれる)。
+    # 円グラフは「系列」ではなく「項目」ごとに色を変えるので、データ点単位で色を付ける
+    if chart_type == "pie":
+        n_points = max_row - min_row + (0 if titles_from_data else 1)
+        chart.series[0].data_points = [
+            DataPoint(idx=i, spPr=GraphicalProperties(solidFill=CHART_COLORS[i % len(CHART_COLORS)]))
+            for i in range(n_points)
+        ]
+    else:
+        for i, s in enumerate(chart.series):
+            s.graphicalProperties.solidFill = CHART_COLORS[i % len(CHART_COLORS)]
+    note = ""
+    if error_bars_range:
+        if chart_type == "pie":
+            return "エラー: 円グラフにはエラーバーを付けられません"
+        try:
+            range_boundaries(error_bars_range)
+        except ValueError:
+            return f"エラー: error_bars_range「{error_bars_range}」はA1形式(例: C2:C5)で指定してください"
+        if len(chart.series) > 1:
+            note = "\n注意: エラーバーは最初の系列にだけ付けました(複数系列には対応していません)"
+        ref = f"'{ws.title}'!{_absolute(error_bars_range)}"
+        # errValType='cust' = 値をセルから取る。plus/minusに同じ範囲を渡して±のひげにする
+        chart.series[0].errBars = ErrorBars(
+            errBarType="both", errValType="cust",
+            plus=NumDataSource(NumRef(f=ref)), minus=NumDataSource(NumRef(f=ref)),
+        )
+    if not anchor:
+        anchor = f"{get_column_letter(max_col + 2)}{min_row}"  # 表の右隣に置く
+    ws.add_chart(chart, anchor)
+    atomic_save(wb.save, path)
+    where = f"シート「{ws.title}」の{anchor}"
+    bars = "エラーバー付きの" if error_bars_range else ""
+    return (f"{where}に{bars}グラフ({chart_type})を追加しました。Excel上で編集できるグラフなので、"
+            f"参照元のセル({data_range})を変更すればグラフも変わります{note}")
+
+
 EXCEL_TOOLS = [excel_create, excel_read, excel_query, excel_write_cells, excel_write_rows, excel_format,
-               excel_format_text, excel_add_sheet]
+               excel_format_text, excel_add_sheet, excel_add_chart]

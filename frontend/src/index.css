@@ -266,7 +266,18 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- Excel ---------- */
 .excel-preview { height: 100%; display: flex; flex-direction: column; }
-.excel-grid-wrap { flex: 1; overflow: auto; background: var(--bg); }
+.excel-grid-wrap { flex: 1; overflow: auto; background: var(--bg); position: relative; }
+/* シートに貼られた画像・ネイティブグラフ。位置はJS側でセルを測って決める。
+   pointer-events:none にして、下のセルもクリック/ドラッグで選べるようにする */
+.excel-overlay { position: absolute; pointer-events: none; z-index: 1; }
+.excel-overlay img { display: block; }
+.excel-chart-svg { display: block; box-shadow: var(--shadow-1); border-radius: 4px; }
+.excel-chart-unsupported {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 12px; text-align: center; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; font-size: 13px; color: var(--text);
+}
+.excel-chart-unsupported span { font-size: 11.5px; color: var(--text-2); }
 .excel-grid { border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .excel-grid th, .excel-grid td {
   border: 1px solid #e0e0e0; padding: 3px 7px; height: 24px;

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -338,7 +339,11 @@ async def preview_image(cache_name: str, image_name: str):
     path = (config.PREVIEW_CACHE_DIR / cache_name / image_name).resolve()
     if not path.is_relative_to(config.PREVIEW_CACHE_DIR) or not path.exists():
         raise HTTPException(404)
-    return FileResponse(str(path), media_type="image/png")
+    # スライドはPNGだが、Excelから取り出した画像はJPEG等のこともある
+    media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if not media_type.startswith("image/"):
+        raise HTTPException(404)
+    return FileResponse(str(path), media_type=media_type)
 
 
 def _existing(filename: str) -> Path:

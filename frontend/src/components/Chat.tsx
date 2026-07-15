@@ -17,6 +17,7 @@ const TOOL_LABELS: Record<string, string> = {
   excel_format: '書式設定',
   excel_format_text: '文字の色・書式',
   excel_add_sheet: 'シート追加',
+  excel_add_chart: 'グラフ追加',
   word_create: 'Word作成',
   word_read: 'Word読み取り',
   word_find: '段落の検索',

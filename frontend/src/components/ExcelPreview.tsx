@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { ExcelCell, ExcelSheet } from '../types'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ExcelCell, ExcelChart as ChartSpec, ExcelSheet } from '../types'
+import { ExcelChart } from './ExcelChart'
 
 function colLabel(i: number): string {
   let label = ''
@@ -41,6 +42,18 @@ function rangeLabel(sheetName: string, sel: Sel): string {
   const end = `${colLabel(cMax)}${rMax + 1}`
   const range = start === end ? `セル ${start}` : `セル範囲 ${start}:${end}`
   return `シート「${sheetName}」の${range}`
+}
+
+/** グリッドに重ねて表示するもの(貼られた画像 / ネイティブグラフ)と、その実測位置。
+ *  ChartSpec自身が種別の`kind`を持つので、判別子は`overlay`という別名にしている */
+type Overlay =
+  | ({ overlay: 'image' } & ExcelSheet['images'][number])
+  | ({ overlay: 'chart' } & ChartSpec)
+
+interface Placed {
+  item: Overlay
+  left: number
+  top: number
 }
 
 interface SheetGridProps {
@@ -97,9 +110,59 @@ function SheetGrid({ sheet, onTarget }: SheetGridProps) {
 
   const nCols = sheet.rows[0]?.length ?? 0
 
+  // シートに貼られた画像・ネイティブグラフを、アンカーのセルの位置に重ねる。
+  // セルの実座標はレイアウト後にしか分からないので、DOMを測ってから配置する
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const tableRef = useRef<HTMLTableElement>(null)
+  const cellRefs = useRef(new Map<string, HTMLTableCellElement>())
+  const [placed, setPlaced] = useState<Placed[]>([])
+
+  const overlays = useMemo(
+    () => [
+      ...sheet.images.map((im) => ({ ...im, overlay: 'image' as const })),
+      ...sheet.charts.map((ch) => ({ ...ch, overlay: 'chart' as const })),
+    ],
+    [sheet],
+  )
+
+  useLayoutEffect(() => {
+    if (!overlays.length) {
+      setPlaced([])
+      return
+    }
+    const measure = () => {
+      const wrap = wrapRef.current
+      if (!wrap) return
+      // td.offsetLeft はtable基準になるため、ラッパー基準の座標を実測して求める
+      const base = wrap.getBoundingClientRect()
+      const out: Placed[] = []
+      for (const ov of overlays) {
+        // 表示範囲(300行×60列)やデータ範囲の外に置かれたものは、いちばん近い端のセルに寄せる
+        const r = Math.min(ov.r, sheet.rows.length - 1)
+        const c = Math.min(ov.c, nCols - 1)
+        const td = cellRefs.current.get(`${r}:${c}`)
+        if (!td) continue // 結合セルの内側などで対応するセルが無いときは諦める
+        const rect = td.getBoundingClientRect()
+        out.push({
+          item: ov,
+          left: rect.left - base.left + wrap.scrollLeft - wrap.clientLeft + ov.dx,
+          top: rect.top - base.top + wrap.scrollTop - wrap.clientTop + ov.dy,
+        })
+      }
+      setPlaced(out)
+    }
+    measure()
+    // 列幅の確定やフォント読み込みでレイアウトがずれるので、表のサイズ変化に追従する
+    const table = tableRef.current
+    if (!table) return
+    const ro = new ResizeObserver(measure)
+    ro.observe(table)
+    return () => ro.disconnect()
+  }, [overlays, sheet.rows.length, nCols])
+
   return (
-    <div className="excel-grid-wrap">
-      <table className="excel-grid">
+    <div className="excel-grid-wrap" ref={wrapRef}>
+      <table className="excel-grid" ref={tableRef}>
         <thead>
           <tr>
             <th className="corner" />
@@ -119,6 +182,10 @@ function SheetGrid({ sheet, onTarget }: SheetGridProps) {
                 return (
                   <td
                     key={c}
+                    ref={(el) => {
+                      if (el) cellRefs.current.set(key, el)
+                      else cellRefs.current.delete(key)
+                    }}
                     rowSpan={span?.rs}
                     colSpan={span?.cs}
                     className={isSel(r, c) ? 'sel' : undefined}
@@ -135,6 +202,21 @@ function SheetGrid({ sheet, onTarget }: SheetGridProps) {
           ))}
         </tbody>
       </table>
+      {placed.map((p, i) => (
+        <div key={i} className="excel-overlay" style={{ left: p.left, top: p.top }}>
+          {p.item.overlay === 'image' ? (
+            <img src={p.item.url} alt="シートに貼られた画像" style={{ width: p.item.w, height: p.item.h }} />
+          ) : p.item.kind === null ? (
+            // 描画に未対応の種類(散布図など)。存在だけは伝える
+            <div className="excel-chart-unsupported" style={{ width: p.item.w, height: p.item.h }}>
+              {p.item.title || 'グラフ'}
+              <span>この種類のグラフはプレビューできません。ダウンロードしてExcelで開くと表示されます</span>
+            </div>
+          ) : (
+            <ExcelChart chart={p.item} />
+          )}
+        </div>
+      ))}
       {sheet.truncated && <div className="truncated-note">※ 表示は300行×60列までに制限されています</div>}
     </div>
   )

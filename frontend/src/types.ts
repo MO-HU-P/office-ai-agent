@@ -41,11 +41,45 @@ export interface ExcelCell {
   s?: ExcelCellStyle
 }
 
+/** シートに貼られた画像。r/cはアンカーのセル(0始まり)、dx/dyはそのセル内での位置、w/hは表示サイズ(px) */
+export interface ExcelImage {
+  url: string
+  r: number
+  c: number
+  dx: number
+  dy: number
+  w: number
+  h: number
+}
+
+/** Excel上で編集できるネイティブのグラフ。r/c/dx/dy/w/hの意味はExcelImageと同じ。
+ *  kindがnullのものは描画に未対応の種類(注記だけ出す)。値は参照先セルから解決済み */
+export interface ExcelChart {
+  r: number
+  c: number
+  dx: number
+  dy: number
+  w: number
+  h: number
+  title: string
+  kind: 'bar' | 'bar_horizontal' | 'line' | 'pie' | null
+  xTitle?: string
+  yTitle?: string
+  stacked?: boolean
+  categories?: string[]
+  /** errorsはエラーバー(誤差範囲)の値。付いていない系列はnull */
+  series?: { name: string; values: (number | null)[]; color: string | null; errors: (number | null)[] | null }[]
+  /** 円グラフのみ。項目ごとの色(未指定の項目はnull) */
+  pointColors?: (string | null)[]
+}
+
 export interface ExcelSheet {
   name: string
   rows: ExcelCell[][]
   merges: { r: number; c: number; rs: number; cs: number }[]
   colWidths: number[]
+  images: ExcelImage[]
+  charts: ExcelChart[]
   truncated: boolean
 }
 
