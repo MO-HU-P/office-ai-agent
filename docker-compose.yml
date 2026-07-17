@@ -36,8 +36,10 @@ services:
 
   frontend:
     build: ./frontend
+    # 127.0.0.1 に明示バインドし、このPC自身からのみアクセス可能にする
+    # (認証が無いため、同じLAN/Wi-Fiの他端末から届かないようにするのが目的)。
     ports:
-      - "${APP_PORT:-3000}:80"
+      - "127.0.0.1:${APP_PORT:-3000}:80"
     depends_on:
       - backend
     restart: unless-stopped

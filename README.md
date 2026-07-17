@@ -73,7 +73,7 @@ cd frontend && npm install && npm run dev   # http://localhost:5173
 
 ## Notes
 
-- **No authentication** — designed for localhost / trusted networks only. The agent executes Python for data analysis, so do not expose it to the internet.
+- **Localhost-only by default.** The frontend port is bound to `127.0.0.1` in `docker-compose.yml` (`127.0.0.1:${APP_PORT}:80`), so `http://localhost:3000` is reachable only from your own machine — other devices on the same Wi-Fi/LAN cannot reach it. There is **no authentication** on purpose, because this localhost-only assumption holds. If you ever expose it beyond localhost, add your own auth first; the agent also executes Python for data analysis, so never put it on the public internet.
 - **Mind what you upload.** With a cloud provider, a file's contents are sent to the provider when you ask the agent to work on it. Avoid uploading files that contain personal information **or confidential/secret material** (internal-only or unpublished data) as-is. Anonymization can redact structured personal data first, but it does **not** remove confidential content — for sensitive material, switch to local mode, where nothing leaves the machine.
 - API keys live only in `.env` (`OLLAMA_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`); they are never returned by the API, logged, or shown in the UI — only a `*_key_configured` boolean is exposed. Model-name inputs reject anything that looks like a key (`sk-…`, `AIza…`) so a mis-paste can't be persisted to `settings.json`.
 - Tool docstrings and the system prompt are intentionally in Japanese: they are part of the LLM prompt, and matching the language of user requests improves tool selection — especially for small local models.
